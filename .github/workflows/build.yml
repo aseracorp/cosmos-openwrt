@@ -1,0 +1,44 @@
+name: Build OpenWrt Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target architecture (e.g., ath79-generic)'
+        required: true
+        type: string
+        default: 'ath79-generic'
+      profile:
+        description: 'Device profile (e.g., tplink_archer-c60-v2)'
+        required: true
+        type: string
+        default: 'tplink_archer-c60-v2'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build OpenWrt image
+        run: |
+          docker build --build-arg target=${{ github.event.inputs.target }} \
+                      --build-arg profile=${{ github.event.inputs.profile }} \
+                      -t openwrt-builder .
+
+      - name: Copy artifacts from container
+        run: |
+          container_id=$(docker create openwrt-builder)
+          docker cp $container_id:/openwrt/openwrt-imagebuilder-${{ github.event.inputs.target }}.Linux-x86_64/bin .
+          docker rm $container_id
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: openwrt-firmware
+          path: bin/
+          retention-days: 7
