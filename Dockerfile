@@ -1,5 +1,8 @@
 FROM debian:stable
 
+ARG version=24.10.1
+ENV version=$version
+
 ARG target=ath79-generic
 ENV target=$target
 
@@ -18,7 +21,7 @@ RUN apt-get update && apt-get -y install build-essential file libncurses-dev zli
 RUN mkdir /openwrt
 WORKDIR /openwrt
 
-RUN wget https://downloads.openwrt.org/snapshots/targets/${target//-//}/openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst
+RUN wget https://downloads.openwrt.org/${version}/targets/${target//-//}/openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst
 
 RUN tar --zstd -x -f openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst
 

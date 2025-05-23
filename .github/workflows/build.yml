@@ -3,6 +3,11 @@ name: Build OpenWrt Image
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: 'OpenWrt version (e.g., 24.10.1)'
+        required: true
+        type: string
+        default: '24.10.1'
       target:
         description: 'Target architecture (e.g., ath79-generic)'
         required: true
@@ -31,7 +36,8 @@ jobs:
 
       - name: Build OpenWrt image
         run: |
-          docker build --build-arg target=${{ github.event.inputs.target }} \
+          docker build --build-arg version=${{ github.event.inputs.version }} \
+                      --build-arg target=${{ github.event.inputs.target }} \
                       --build-arg profile=${{ github.event.inputs.profile }} \
                       --build-arg packages="${{ github.event.inputs.packages }}" \
                       -t openwrt-builder .
