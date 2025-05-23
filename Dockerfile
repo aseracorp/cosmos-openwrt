@@ -6,7 +6,7 @@ ENV version=$version
 ARG target=ath79-generic
 ENV target=$target
 
-ARG profile=linksys_ea8100-v1
+ARG profile=tplink_archer-c60-v2
 ENV profile=$profile
 
 ARG packages=
@@ -27,9 +27,9 @@ RUN if [ "${version}" = "snapshots" ]; then \
     wget https://downloads.openwrt.org/releases/${version}/targets/${target//-//}/openwrt-imagebuilder-${version}-${target}.Linux-x86_64.tar.zst; \
     fi
 
-RUN mkdir openwrt-imagebuilder
-RUN tar --zstd -x -f openwrt-imagebuilder-* -C ./openwrt-imagebuilder
-RUN mv ./openwrt-imagebuilder/openwrt-imagebuilder-*/* ./openwrt-imagebuilder/
+RUN tar --zstd -x -f openwrt-imagebuilder-*
+RUN rm openwrt-imagebuilder-*.tar.zst
+RUN mv openwrt-imagebuilder-* openwrt-imagebuilder
 
 WORKDIR /openwrt/openwrt-imagebuilder
 
