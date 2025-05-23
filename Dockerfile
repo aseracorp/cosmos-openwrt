@@ -27,7 +27,8 @@ RUN if [ "${version}" = "snapshots" ]; then \
     wget https://downloads.openwrt.org/releases/${version}/targets/${target//-//}/openwrt-imagebuilder-${version}-${target}.Linux-x86_64.tar.zst; \
     fi
 
-RUN tar --zstd -x -f openwrt-imagebuilder-* -C /openwrt-imagebuilder
+RUN mkdir openwrt-imagebuilder
+RUN tar --zstd -x -f openwrt-imagebuilder-* -C ./openwrt-imagebuilder
 
 WORKDIR /openwrt/openwrt-imagebuilder
 
