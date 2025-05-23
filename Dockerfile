@@ -22,14 +22,14 @@ RUN mkdir /openwrt
 WORKDIR /openwrt
 
 RUN if [ "${version}" = "snapshots" ]; then \
-      wget https://downloads.openwrt.org/snapshots/targets/${target//-//}/openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst; \
+    wget https://downloads.openwrt.org/snapshots/targets/${target//-//}/openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst; \
     else \
-      wget https://downloads.openwrt.org/releases/${version}/targets/${target//-//}/openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst; \
+    wget https://downloads.openwrt.org/releases/${version}/targets/${target//-//}/openwrt-imagebuilder-${version}-${target}.Linux-x86_64.tar.zst; \
     fi
 
-RUN tar --zstd -x -f openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst
+RUN tar --zstd -x -f openwrt-imagebuilder-*
 
-WORKDIR /openwrt/openwrt-imagebuilder-${target}.Linux-x86_64
+WORKDIR /openwrt/openwrt-imagebuilder-*
 
 
 
