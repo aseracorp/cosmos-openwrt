@@ -29,7 +29,7 @@ RUN if [ "${version}" = "snapshots" ]; then \
 
 RUN mkdir openwrt-imagebuilder
 RUN tar --zstd -x -f openwrt-imagebuilder-* -C ./openwrt-imagebuilder
-RUN mv ./openwrt-imagebuilder/openwrt-imagebuilder-* ./openwrt-imagebuilder
+RUN mv ./openwrt-imagebuilder/openwrt-imagebuilder-*/* ./openwrt-imagebuilder/
 
 WORKDIR /openwrt/openwrt-imagebuilder
 
