@@ -21,7 +21,11 @@ RUN apt-get update && apt-get -y install build-essential file libncurses-dev zli
 RUN mkdir /openwrt
 WORKDIR /openwrt
 
-RUN wget https://downloads.openwrt.org/${version}/targets/${target//-//}/openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst
+RUN if [ "${version}" = "snapshots" ]; then \
+      wget https://downloads.openwrt.org/snapshots/targets/${target//-//}/openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst; \
+    else \
+      wget https://downloads.openwrt.org/releases/${version}/targets/${target//-//}/openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst; \
+    fi
 
 RUN tar --zstd -x -f openwrt-imagebuilder-${target}.Linux-x86_64.tar.zst
 
