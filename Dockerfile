@@ -6,6 +6,9 @@ ENV target=$target
 ARG profile=linksys_ea8100-v1
 ENV profile=$profile
 
+ARG packages=
+ENV packages=$packages
+
 SHELL ["/bin/bash", "-c"]
 
 RUN apt-get update && apt-get -y install build-essential file libncurses-dev zlib1g-dev gawk git \
@@ -23,5 +26,5 @@ WORKDIR /openwrt/openwrt-imagebuilder-${target}.Linux-x86_64
 
 
 
-RUN make image PROFILE=${profile}
+RUN make image PROFILE=${profile} PACKAGES="${packages}"
 

@@ -13,6 +13,11 @@ on:
         required: true
         type: string
         default: 'tplink_archer-c60-v2'
+      packages:
+        description: 'Additional packages to include (space-separated)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   build:
@@ -28,6 +33,7 @@ jobs:
         run: |
           docker build --build-arg target=${{ github.event.inputs.target }} \
                       --build-arg profile=${{ github.event.inputs.profile }} \
+                      --build-arg packages="${{ github.event.inputs.packages }}" \
                       -t openwrt-builder .
 
       - name: Copy artifacts from container
