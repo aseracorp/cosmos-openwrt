@@ -45,7 +45,17 @@ RUN if [ "${version}" = "snapshots" ]; then \
     rm openwrt-imagebuilder-*.tar.zst && rm sha256sums && \
     mv openwrt-imagebuilder-* openwrt-imagebuilder
 
+RUN curl -L "https://github.com/amadvance/snapraid/releases/download/v12.4/snapraid-12.4.tar.gz" -o "snapraid-12.4.tar.gz" && \
+    curl -L "https://raw.githubusercontent.com/amadvance/snapraid/refs/heads/master/CHECKSUMS" -o CHECKSUMS; \
+    sha256sum --check --ignore-missing CHECKSUMS && \
+    tar -xvzf snapraid-12.4.tar.gz && \
+    rm snapraid-12.4.tar.gz && rm CHECKSUMS && \
+    cd snapraid-12.4/ && \
+    ./configure && make && make check && make install
+
 WORKDIR /openwrt/openwrt-imagebuilder
+
+RUN mkdir -p files/usr/local/bin && cp /usr/local/bin/snapraid files/usr/local/bin/ && chmod +x files/usr/local/bin/snapraid
 
 RUN echo "INSTALLING COSMOS CLOUD..." && \
     echo "Creating directories..." && \
