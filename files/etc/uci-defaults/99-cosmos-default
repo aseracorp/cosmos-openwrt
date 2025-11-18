@@ -1,0 +1,110 @@
+# Beware! This script will be in /rom/etc/uci-defaults/ as part of the image.
+# Uncomment lines to apply:
+
+# wlan_name="OpenWrt"
+# wlan_password=""
+
+# root_password=""
+# lan_ip_address="192.168.1.1"
+# if left commented, LAN will be set to dhcp client
+
+# enable cosmos on boot
+cosmos=1
+
+#################
+
+# log potential errors
+exec >/tmp/99-cosmos-default.log 2>&1
+
+# disable Password-Login for SSH = only allow authorized_keys
+uci set dropbear.main.PasswordAuth='off'
+uci set dropbear.main.RootPasswordAuth='off'
+uci commit dropbear
+
+if [ -f "/boot/.env" ]; then source /boot/.env; fi
+if [ "${SSH_KEY}" ]; then echo "${SSH_KEY}" >> /etc/dropbear/authorized_keys ; fi
+
+if [ -z "$root_password" ]; then
+  root_password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 13; echo)  
+fi
+(echo "$root_password"; sleep 1; echo "$root_password") | passwd > /dev/null
+echo "PASSWD=$root_password" >> /opt/cosmos-config/.env
+
+# Configure LAN
+# More options: https://openwrt.org/docs/guide-user/base-system/basic-networking
+if [ -n "$lan_ip_address" ]; then
+  echo "set static IP $lan_ip_address"
+  uci set network.lan.ipaddr='$lan_ip_address'
+  uci commit network  
+else
+  echo "set IP to dhcp-client"
+  uci set network.lan.proto='dhcp'
+  uci set network.lan11=interface
+  uci set network.lan11.name='staticFallback'
+  uci set network.lan11.device='@lan'
+  uci set network.lan11.proto='static'
+  uci set network.lan11.ipaddr='192.168.0.11/24'
+  uci commit network
+  uci add_list firewall.@zone[0].network='lan11'
+  uci commit firewall
+fi
+
+# Configure WLAN
+# More options: https://openwrt.org/docs/guide-user/network/wifi/basic#wi-fi_interfaces
+if [ -n "$wlan_name" -a -n "$wlan_password" -a ${#wlan_password} -ge 8 ]; then
+  echo "set Wifi-Settings"
+  uci set wireless.@wifi-device[0].disabled='0'
+  uci set wireless.@wifi-iface[0].disabled='0'
+  uci set wireless.@wifi-iface[0].encryption='sae-mixed'
+  uci set wireless.@wifi-iface[0].ssid="$wlan_name"
+  uci set wireless.@wifi-iface[0].key="$wlan_password"
+  uci commit wireless
+fi
+
+# setup cosmos
+if [ -n "$cosmos" ]; then
+  
+  #set hostname & Timezone
+  uci set system.@system[0].hostname=cosmos-cloud
+  uci set system.@system[0].zonename='Europe/Zurich'
+  uci set system.@system[0].timezone='CET-1CEST,M3.5.0,M10.5.0/3'
+  uci commit system
+
+  #store hostname in env-var
+  echo "HOSTNAME=0.0.0.0" >> /opt/cosmos-config/.env
+
+  #switch luci to free ports
+  echo "setup luci to free ports"
+  uci del uhttpd.main.listen_http
+  uci add_list uhttpd.main.listen_http='127.0.0.1:8080'
+  uci del uhttpd.main.listen_https
+  uci commit uhttpd
+
+  #add network rules for cosmos-Networks
+  echo "setup firewall rules for cosmos"
+  uci add firewall zone
+  uci set firewall.@zone[-1].name='cosmos'
+  uci set firewall.@zone[-1].input='ACCEPT'
+  uci set firewall.@zone[-1].output='ACCEPT'
+  uci set firewall.@zone[-1].forward='ACCEPT'
+  uci add_list firewall.@zone[-1].subnet='172.16.0.0/12'
+  uci add firewall forwarding
+  uci set firewall.@forwarding[-1].src='cosmos'
+  uci set firewall.@forwarding[-1].dest='lan'
+  uci add firewall forwarding
+  uci set firewall.@forwarding[-1].src='cosmos'
+  uci set firewall.@forwarding[-1].dest='wan'
+  uci add firewall forwarding
+  uci set firewall.@forwarding[-1].src='lan'
+  uci set firewall.@forwarding[-1].dest='cosmos'
+  #uci add firewall zone
+  #uci set firewall.@zone[-1].name='constellation'
+  #uci set firewall.@zone[-1].input='ACCEPT'
+  #uci set firewall.@zone[-1].output='ACCEPT'
+  #uci set firewall.@zone[-1].forward='REJECT'
+  #uci add_list firewall.@zone[-1].subnet='192.168.201.0/24'
+  uci commit firewall
+fi
+
+echo "All done!"
+exit 0

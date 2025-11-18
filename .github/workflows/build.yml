@@ -3,54 +3,201 @@ name: Build OpenWrt Image
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'OpenWrt version (e.g., 24.10.1)'
-        required: true
+      cosmos_version:
+        description: 'Cosmos version (latest, unstable or exact: v0.19.0-unstable4)'
+        required: false
         type: string
-        default: '24.10.1'
+        default: 'latest'
+      owrt_version:
+        description: 'OpenWrt version (e.g., 24.10.3)'
+        required: false
+        type: string
+        default: '24.10.4'
       target:
-        description: 'Target architecture (e.g., ath79-generic)'
+        description: 'Target architecture (e.g., bcm27xx-bcm2711)'
         required: true
         type: string
-        default: 'ath79-generic'
+        default: 'bcm27xx-bcm2711'
       profile:
-        description: 'Device profile (e.g., tplink_archer-c60-v2)'
+        description: 'Device profile (e.g., rpi-4)'
         required: true
         type: string
-        default: 'tplink_archer-c60-v2'
+        default: 'rpi-4'
       packages:
         description: 'Additional packages to include (space-separated)'
         required: false
         type: string
-        default: ''
+        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd attendedsysupgrade-common luci-app-attendedsysupgrade kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat'
+      files:
+        description: 'Folder with additional files (f.e. files/etc/uci-defaults)'
+        required: false
+        type: string
+        default: 'files'
+      rootfs_partsize:
+        description: 'OpenWRT Root-Filesystem Partition size (e.g. 896)'
+        required: false
+        type: string
+        default: '896'
+      storage:
+        description: 'add BTRFS-partition on root disk for App-Storage?'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  owrt_version: 'snapshots'
+  cosmos_version: ''
+  snapraid_version: '12.4'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - if: ${{ github.event.inputs.owrt_version != '' }}
+        run: echo "owrt_version=${{ github.event.inputs.owrt_version }}" >> "$GITHUB_ENV"
 
-      - name: Build OpenWrt image
+      - id: targetpath
+        uses: frabert/replace-string-action@v2
+        with:
+          pattern: '-'
+          string: ${{ format(github.event.inputs.target) }}
+          replace-with: '/'
+
+      - name: install deps
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq
+          version: 1.0
+
+      - name: cache OpenWrt Imagebuilder
+        if: ${{ env.owrt_version }} != 'snapshots'
+        id: cache-imagebuilder
+        uses: actions/cache@v4
+        with:
+          path: openwrt/openwrt-imagebuilder/
+          key: ${{ runner.os }}-imagebuilder-${{ env.owrt_version }}-${{ github.event.inputs.target }}
+
+      - name: Download OpenWrt Imagebuilder
+        if: steps.cache-imagebuilder.outputs.cache-hit != 'true'
         run: |
-          docker build --build-arg version=${{ github.event.inputs.version }} \
-                      --build-arg target=${{ github.event.inputs.target }} \
-                      --build-arg profile=${{ github.event.inputs.profile }} \
-                      --build-arg packages="${{ github.event.inputs.packages }}" \
-                      -t openwrt-builder .
+          mkdir openwrt && cd openwrt
+          if [ "${{ env.owrt_version }}" = "snapshots" ]; then
+            curl -L "https://downloads.openwrt.org/snapshots/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-imagebuilder-${{ github.event.inputs.target }}.Linux-x86_64.tar.zst" -o "openwrt-imagebuilder-${{ github.event.inputs.target }}.Linux-x86_64.tar.zst"
+            curl -L "https://downloads.openwrt.org/snapshots/targets/${{ steps.targetpath.outputs.replaced }}/sha256sums" -o sha256sums
+          else
+            curl -L "https://downloads.openwrt.org/releases/${{ env.owrt_version }}/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-imagebuilder-${{ env.owrt_version }}-${{ github.event.inputs.target }}.Linux-x86_64.tar.zst" -o "openwrt-imagebuilder-${{ env.owrt_version }}-${{ github.event.inputs.target }}.Linux-x86_64.tar.zst"
+            curl -L "https://downloads.openwrt.org/releases/${{ env.owrt_version }}/targets/${{ steps.targetpath.outputs.replaced }}/sha256sums" -o sha256sums;
+          fi
+          sha256sum --check --ignore-missing sha256sums
+          tar --zstd -x -f openwrt-imagebuilder-*
+          rm openwrt-imagebuilder-*.tar.zst && rm sha256sums
+          mv openwrt-imagebuilder-* openwrt-imagebuilder
 
-      - name: Copy artifacts from container
+      - name: get Cosmos Version
         run: |
-          container_id=$(docker create openwrt-builder)
-          docker cp $container_id:/openwrt/openwrt-imagebuilder/bin .
-          docker rm $container_id
+          if [ "${{ github.event.inputs.cosmos_version }}" = "latest" ] ; then
+            cosmos_version=$(curl -s https://api.github.com/repos/azukaar/Cosmos-Server/releases/latest | grep "tag_name" | cut -d '"' -f 4)
+          elif [ "${{ github.event.inputs.cosmos_version }}" = "unstable" ] ; then
+            cosmos_version=$(jq -r 'map(select(.prerelease)) | first | .tag_name' <<< $(curl -s https://api.github.com/repos/azukaar/Cosmos-Server/releases))
+          else
+            cosmos_version="${{ github.event.inputs.cosmos_version }}"
+          fi
+          echo "cosmos_version=${cosmos_version}" >> "$GITHUB_ENV"
 
-      - name: Upload artifacts
+      - name: cache Cosmos Cloud
+        id: cache-cosmosCloud
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.event.inputs.files }}/opt/cosmos/
+          key: ${{ runner.os }}-cosmosCloud-${{ env.cosmos_version }}
+
+      - name: install Cosmos Cloud
+        if: steps.cache-cosmosCloud.outputs.cache-hit != 'true'
+        run: |
+          echo "INSTALLING COSMOS CLOUD..."
+          mkdir -p ${{ github.event.inputs.files }}/opt/cosmos
+          echo "Downloading Cosmos release $RELEASE..."
+          RELEASE=${{ env.cosmos_version }}
+          ZIP_FILE="cosmos-cloud-${RELEASE#v}-arm64.zip"
+          curl -L "https://github.com/azukaar/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}" -o "${ZIP_FILE}"
+          curl -L "https://github.com/azukaar/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}.md5" -o "${ZIP_FILE}.md5"
+          echo "Verifying MD5 checksum..."
+          md5sum -c "${ZIP_FILE}.md5"
+          echo "Extracting files..."
+          unzip -o "${ZIP_FILE}"
+          mv cosmos-cloud-${RELEASE#v}-arm64/* ${{ github.event.inputs.files }}/opt/cosmos/
+
+      - name: add env-vars
+        run: |
+          mkdir -p ${{ github.event.inputs.files }}/opt/cosmos-config
+          echo "STORAGE=${{ github.event.inputs.storage }}" >> ${{ github.event.inputs.files }}/opt/cosmos-config/.env
+
+      - name: cache Snapraid
+        id: cache-snapraid
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.event.inputs.files }}/sbin/snapraid
+          key: ${{ runner.os }}-snapraid-${{ env.snapraid_version }}
+
+      - name: install Snapraid
+        if: steps.cache-snapraid.outputs.cache-hit != 'true'
+        run: |
+          echo "INSTALLING SNAPRAID..."
+          curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
+          tar -xf snapraid-${{ env.snapraid_version }}.tar.gz && cd snapraid-${{ env.snapraid_version }}/ && ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-static -pthread" --enable-mpers=check && make
+          mkdir ../${{ github.event.inputs.files }}/sbin/ && mv snapraid ../${{ github.event.inputs.files }}/sbin/
+
+      - name: add custom files
+        run: |
+          chmod -R 755 ${{ github.event.inputs.files }}
+          cp -R ${{ github.event.inputs.files }} openwrt/openwrt-imagebuilder/
+
+      - name: build image
+        working-directory: openwrt/openwrt-imagebuilder
+        run: |
+          make image PROFILE=${{ github.event.inputs.profile }} PACKAGES="${{ github.event.inputs.packages }}" FILES="${{ github.event.inputs.files }}" ROOTFS_PARTSIZE="${{ github.event.inputs.rootfs_partsize }}"
+
+      - if: ${{ env.owrt_version != 'snapshots'}}
+        name: Upload factory image
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-firmware
-          path: bin/
+          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory.img.gz
           retention-days: 7
+          compression-level: 0 # no compression
+
+      - if: ${{ env.owrt_version != 'snapshots'}}
+        name: Upload sysupgrade image
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
+          retention-days: 7
+          compression-level: 0 # no compression
+
+      - if: ${{ env.owrt_version == 'snapshots'}}
+        name: Upload factory image
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory.img.gz
+          retention-days: 7
+          compression-level: 0 # no compression
+
+      - if: ${{ env.owrt_version == 'snapshots'}}
+        name: Upload sysupgrade image
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
+          retention-days: 7
+          compression-level: 0 # no compression
+
+      - name: cleanup before caching
+        working-directory: openwrt/openwrt-imagebuilder
+        run: |
+          rm -R ${{ github.event.inputs.files }}/
+          rm -R bin/
