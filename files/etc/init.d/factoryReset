@@ -1,0 +1,14 @@
+#!/bin/sh /etc/rc.common
+# resi fix KNX on co-processor
+# Copyright aseracorp 2025
+
+START=97
+STOP=03
+
+start() {
+        if [ -f /boot/reset ]; then rm /boot/reset && firstboot -y && reboot && exit 0; fi
+}
+
+stop() {
+        exit
+}

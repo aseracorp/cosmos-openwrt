@@ -1,0 +1,9 @@
+#!/bin/bash
+# CosmosCloud on OpenWrt fix missing shutdown-command (OpenWrt only knows reboot/poweroff)
+# Copyright aseracorp 2025
+
+if [ $1 == "-r" ]; then
+        reboot
+elif [ $1 == "-h" ]; then
+        poweroff
+fi
