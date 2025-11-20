@@ -17,12 +17,12 @@ on:
         description: 'Target architecture (e.g., bcm27xx-bcm2711)'
         required: true
         type: string
-        default: 'bcm27xx-bcm2711'
+        default: 'x86-64'
       profile:
         description: 'Device profile (e.g., rpi-4)'
         required: true
         type: string
-        default: 'rpi-4'
+        default: 'generic'
       packages:
         description: 'Additional packages to include (space-separated)'
         required: false
@@ -69,7 +69,7 @@ jobs:
       - name: install deps
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq
+          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make binutils jq
           version: 1.0
 
       - name: cache OpenWrt Imagebuilder
@@ -121,14 +121,14 @@ jobs:
           mkdir -p ${{ github.event.inputs.files }}/opt/cosmos
           echo "Downloading Cosmos release $RELEASE..."
           RELEASE=${{ env.cosmos_version }}
-          ZIP_FILE="cosmos-cloud-${RELEASE#v}-arm64.zip"
+          ZIP_FILE="cosmos-cloud-${RELEASE#v}-amd64.zip"
           curl -L "https://github.com/azukaar/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}" -o "${ZIP_FILE}"
           curl -L "https://github.com/azukaar/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}.md5" -o "${ZIP_FILE}.md5"
           echo "Verifying MD5 checksum..."
           md5sum -c "${ZIP_FILE}.md5"
           echo "Extracting files..."
           unzip -o "${ZIP_FILE}"
-          mv cosmos-cloud-${RELEASE#v}-arm64/* ${{ github.event.inputs.files }}/opt/cosmos/
+          mv cosmos-cloud-${RELEASE#v}-amd64/* ${{ github.event.inputs.files }}/opt/cosmos/
 
       - name: add env-vars
         run: |
@@ -147,7 +147,7 @@ jobs:
         run: |
           echo "INSTALLING SNAPRAID..."
           curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
-          tar -xf snapraid-${{ env.snapraid_version }}.tar.gz && cd snapraid-${{ env.snapraid_version }}/ && ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-static -pthread" --enable-mpers=check && make
+          tar -xf snapraid-${{ env.snapraid_version }}.tar.gz && cd snapraid-${{ env.snapraid_version }}/ && ./configure LDFLAGS="-static -pthread" --enable-mpers=check && make
           mkdir ../${{ github.event.inputs.files }}/sbin/ && mv snapraid ../${{ github.event.inputs.files }}/sbin/
 
       - name: add custom files
@@ -164,8 +164,8 @@ jobs:
         name: Upload factory image
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory.img.gz
+          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi.img.gz 
           retention-days: 7
           compression-level: 0 # no compression
 
@@ -173,8 +173,8 @@ jobs:
         name: Upload sysupgrade image
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
+          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined.img.gz 
           retention-days: 7
           compression-level: 0 # no compression
 
@@ -182,8 +182,8 @@ jobs:
         name: Upload factory image
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory.img.gz
+          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi.img.gz
           retention-days: 7
           compression-level: 0 # no compression
 
@@ -191,8 +191,8 @@ jobs:
         name: Upload sysupgrade image
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
+          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined.img.gz
           retention-days: 7
           compression-level: 0 # no compression
 
