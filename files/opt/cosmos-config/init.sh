@@ -224,7 +224,7 @@ if [ -n "${hostname}" ]; then
                 "RestrictToConstellation": false,
                 "OverwriteHostHeader": "",
                 "WhitelistInboundIPs": [],
-                "Icon": "",
+                "Icon": "https://raw.githubusercontent.com/openwrt/branding/refs/heads/master/logo/openwrt_logo_blue_and_dark_blue.svg",
                 "TunnelVia": "",
                 "TunneledHost": "",
                 "ExtraHeaders": null
