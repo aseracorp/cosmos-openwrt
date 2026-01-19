@@ -175,6 +175,7 @@ if [ -n "${hostname}" ]; then
             uci add_list uhttpd.main.listen_http='127.0.0.1:8080'
             uci del uhttpd.main.listen_https
             uci commit uhttpd
+            service uhttpd restart
 
             #disable luci login
             sed -i "s/let user = http.getenv('HTTP_AUTH_USER');/let user = 'root';/g" /usr/share/ucode/luci/dispatcher.uc
