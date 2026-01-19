@@ -29,7 +29,6 @@ uci commit dropbear
 if [ -f "/boot/.env" ]; then source /boot/.env; fi
 if [ "${SSH_KEY}" ]; then echo "${SSH_KEY}" >> /etc/dropbear/authorized_keys ; fi
 
-(echo "$root_password"; sleep 1; echo "$root_password") | passwd > /dev/null
 echo "PASSWD=$root_password" >> /opt/cosmos-config/.env
 
 # Configure LAN
@@ -79,7 +78,7 @@ fi
 if [ -n "$cosmos" ]; then
   
   #set hostname & Timezone
-  uci set system.@system[0].hostname=cosmos-cloud
+  uci set system.@system[0].hostname="cosmos-cloud-$(ifconfig -a | grep -m 1 'eth0' | tail -c 8 | head -c 5 | tr -d : )"
   uci set system.@system[0].zonename='Europe/Zurich'
   uci set system.@system[0].timezone='CET-1CEST,M3.5.0,M10.5.0/3'
   uci commit system
