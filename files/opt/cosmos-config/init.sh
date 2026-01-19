@@ -163,9 +163,17 @@ hostname=$(yq '.HTTPConfig.Hostname' /opt/cosmos-config/cosmos.config.json -o x)
 if [ -n "${hostname}" ]; then
     if [ "${hostname}" != "${HOSTNAME}" ]; then
 
-        #disable luci login
+        #setup luci behind cosmos
         if [ "${HOSTNAME}" == "0.0.0.0" ]; then
             echo "$(date +"%F_%H%M%S") disable luci login..." >> init.log
+
+            #block direct luci access after successfull cosmos setup
+            uci del uhttpd.main.listen_http
+            uci add_list uhttpd.main.listen_http='127.0.0.1:8080'
+            uci del uhttpd.main.listen_https
+            uci commit uhttpd
+
+            #disable luci login
             sed -i "s/let user = http.getenv('HTTP_AUTH_USER');/let user = 'root';/g" /usr/share/ucode/luci/dispatcher.uc
             sed -i "s/let pass = http.getenv('HTTP_AUTH_PASS')/let pass = '${PASSWD}'/g" /usr/share/ucode/luci/dispatcher.uc
             sed -i "s@http.redirect(url);@http.redirect('https://${hostname}/cosmos-ui/');@g" /usr/share/ucode/luci/controller/admin/index.uc
