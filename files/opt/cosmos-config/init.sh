@@ -167,6 +167,9 @@ if [ -n "${hostname}" ]; then
         if [ "${HOSTNAME}" == "0.0.0.0" ]; then
             echo "$(date +"%F_%H%M%S") disable luci login..." >> init.log
 
+            #set root password
+            (echo "${PASSWD}"; sleep 1; echo "${PASSWD}") | passwd > /dev/null
+
             #block direct luci access after successfull cosmos setup
             uci del uhttpd.main.listen_http
             uci add_list uhttpd.main.listen_http='127.0.0.1:8080'
