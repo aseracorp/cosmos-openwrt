@@ -110,12 +110,151 @@ if [ -n "$cosmos" ]; then
   uci add firewall forwarding
   uci set firewall.@forwarding[-1].src='lan'
   uci set firewall.@forwarding[-1].dest='cosmos'
+<<<<<<< HEAD
   #uci add firewall zone
   #uci set firewall.@zone[-1].name='constellation'
   #uci set firewall.@zone[-1].input='ACCEPT'
   #uci set firewall.@zone[-1].output='ACCEPT'
   #uci set firewall.@zone[-1].forward='REJECT'
   #uci add_list firewall.@zone[-1].subnet='192.168.201.0/24'
+=======
+  uci add firewall zone
+  uci set firewall.@zone[-1].name='constellation'
+  uci set firewall.@zone[-1].input='ACCEPT'
+  uci set firewall.@zone[-1].output='ACCEPT'
+  uci set firewall.@zone[-1].forward='ACCEPT'
+  uci add_list firewall.@zone[-1].subnet='192.168.201.0/24'
+  uci add firewall forwarding
+  uci set firewall.@forwarding[-1].src='constellation'
+  uci set firewall.@forwarding[-1].dest='lan'
+  uci add firewall forwarding
+  uci set firewall.@forwarding[-1].src='constellation'
+  uci set firewall.@forwarding[-1].dest='wan'
+
+  uci set network.lan.metric='10'
+  #uci set network.lan11.metric='20'
+  uci set network.wan.metric='30'
+
+  uci set mwan3.lan=interface
+  uci set mwan3.lan.initial_state='online'
+  uci set mwan3.lan.family='ipv4'
+  uci add_list mwan3.lan.track_ip='1.0.0.1'
+  uci add_list mwan3.lan.track_ip='1.1.1.1'
+  uci add_list mwan3.lan.track_ip='208.67.220.222'
+  uci add_list mwan3.lan.track_ip='208.67.222.222'
+  uci set mwan3.lan.track_method='ping'
+  uci set mwan3.lan.reliability='2'
+  uci set mwan3.lan.count='1'
+  uci set mwan3.lan.size='56'
+  uci set mwan3.lan.max_ttl='60'
+  uci set mwan3.lan.timeout='4'
+  uci set mwan3.lan.interval='10'
+  uci set mwan3.lan.failure_interval='5'
+  uci set mwan3.lan.recovery_interval='5'
+  uci set mwan3.lan.down='5'
+  uci set mwan3.lan.up='5'
+  uci set mwan3.lan.enabled='1'
+
+  #uci set mwan3.lan11=interface
+  #uci set mwan3.lan11.initial_state='online'
+  #uci set mwan3.lan11.family='ipv4'
+  #uci add_list mwan3.lan11.track_ip='1.0.0.1'
+  #uci add_list mwan3.lan11.track_ip='1.1.1.1'
+  #uci add_list mwan3.lan11.track_ip='208.67.220.222'
+  #uci add_list mwan3.lan11.track_ip='208.67.222.222'
+  #uci set mwan3.lan11.track_method='ping'
+  #uci set mwan3.lan11.reliability='2'
+  #uci set mwan3.lan11.count='1'
+  #uci set mwan3.lan11.size='56'
+  #uci set mwan3.lan11.max_ttl='60'
+  #uci set mwan3.lan11.timeout='4'
+  #uci set mwan3.lan11.interval='10'
+  #uci set mwan3.lan11.failure_interval='5'
+  #uci set mwan3.lan11.recovery_interval='5'
+  #uci set mwan3.lan11.down='5'
+  #uci set mwan3.lan11.up='5'
+  #uci set mwan3.lan11.enabled='1'
+
+  uci del mwan3.wanb
+  uci del mwan3.wanb6
+  uci del mwan3.wanb_m1_w2
+  uci del mwan3.wanb_m1_w3
+  uci del mwan3.wanb_m2_w2
+  uci del mwan3.wanb6_m1_w2
+  uci del mwan3.wanb6_m1_w3
+  uci del mwan3.wanb6_m2_w2
+  uci del mwan3.wan_m1_w3
+  uci del mwan3.wan_m2_w3
+  uci del mwan3.wan6_m1_w3
+  uci del mwan3.wan6_m2_w3
+  uci set mwan3.lan_m1_w1=member
+  uci set mwan3.lan_m1_w1.interface='lan'
+  uci set mwan3.lan_m1_w1.metric='1'
+  uci set mwan3.lan_m1_w1.weight='1'
+  #uci set mwan3.lan11_m2_w1=member
+  #uci set mwan3.lan11_m2_w1.interface='lan11'
+  #uci set mwan3.lan11_m2_w1.metric='2'
+  #uci set mwan3.lan11_m2_w1.weight='1'
+  uci set mwan3.wan_m3_w1=member
+  uci set mwan3.wan_m3_w1.interface='wan'
+  uci set mwan3.wan_m3_w1.metric='3'
+  uci set mwan3.wan_m3_w1.weight='1'
+  uci del mwan3.wanb_only
+  uci del mwan3.wan_wanb
+  uci del mwan3.wanb_wan
+  uci del mwan3.balanced.use_member
+  uci add_list mwan3.balanced.use_member='wan_m1_w3'
+  uci add_list mwan3.balanced.use_member='wan6_m1_w3'
+  uci set mwan3.default=policy
+  uci add_list mwan3.default.use_member='lan_m1_w1'
+  #uci add_list mwan3.default.use_member='lan11_m2_w1'
+  uci add_list mwan3.default.use_member='wan_m3_w1'
+  uci set mwan3.default.last_resort='default'
+  uci del mwan3.https
+  uci set mwan3.default_rule_v4.use_policy='default'
+  uci set mwan3.default_rule_v6.use_policy='default'
+
+  if [ -e /dev/cdc-wdm0 ]; then
+    uci set network.wwan=interface
+    uci set network.wwan.proto='qmi'
+    #uci set network.globals.packet_steering='1'
+    uci set network.wwan.device='/dev/cdc-wdm0'
+    uci set network.wwan.auth='none'
+    uci set network.wwan.pdptype='ipv4'
+    uci set network.wwan.metric='40'
+
+    uci add_list firewall.@zone[1].network='wwan'
+
+    uci set mwan3.wwan=interface
+    uci set mwan3.wwan.initial_state='online'
+    uci set mwan3.wwan.family='ipv4'
+    uci add_list mwan3.wwan.track_ip='1.0.0.1'
+    uci add_list mwan3.wwan.track_ip='1.1.1.1'
+    uci add_list mwan3.wwan.track_ip='208.67.220.222'
+    uci add_list mwan3.wwan.track_ip='208.67.222.222'
+    uci set mwan3.wwan.track_method='ping'
+    uci set mwan3.wwan.reliability='2'
+    uci set mwan3.wwan.count='1'
+    uci set mwan3.wwan.size='56'
+    uci set mwan3.wwan.max_ttl='60'
+    uci set mwan3.wwan.timeout='4'
+    uci set mwan3.wwan.interval='10'
+    uci set mwan3.wwan.failure_interval='5'
+    uci set mwan3.wwan.recovery_interval='5'
+    uci set mwan3.wwan.down='5'
+    uci set mwan3.wwan.up='5'
+    uci set mwan3.wwan_m4_w1=member
+    uci set mwan3.wwan_m4_w1.interface='wwan'
+    uci set mwan3.wwan_m4_w1.metric='4'
+    uci set mwan3.wwan_m4_w1.weight='1'
+    uci add_list mwan3.balanced.use_member='wwan_m4_w1'
+    uci add_list mwan3.default.use_member='wwan_m4_w1'
+    uci set mwan3.wwan.enabled='1'
+  fi
+
+  uci commit network
+  uci commit mwan3
+>>>>>>> 3ed946a (add constellation firewall rules)
   uci commit firewall
 fi
 
