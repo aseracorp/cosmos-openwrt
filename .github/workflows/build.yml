@@ -73,7 +73,7 @@ jobs:
           version: 1.0
 
       - name: cache OpenWrt Imagebuilder
-        if: ${{ env.owrt_version }} != 'snapshots'
+        if: ${{ env.owrt_version  != 'snapshots' }}
         id: cache-imagebuilder
         uses: actions/cache@v4
         with:
