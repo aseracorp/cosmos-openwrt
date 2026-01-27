@@ -10,8 +10,8 @@
 # enable cosmos on boot
 cosmos=1
 
-if [ -n "$(ifconfig -a | grep 'phy0')" ]; then
-  wlan_name="Cosmos-Cloud-$(ifconfig -a | grep -m 1 'phy0' | tail -c 8 | head -c 5 | tr -d : )"
+if [ -n "$(ifconfig -a | grep 'wlan0')" ]; then
+  wlan_name="Cosmos-Cloud-$(ifconfig -a | grep -m 1 'wlan0' | tail -c 8 | head -c 5 | tr -d : )"
   wlan_password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 13; echo)
 fi
 root_password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 13; echo)
@@ -20,6 +20,9 @@ root_password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 13; echo)
 
 # log potential errors
 exec >/tmp/99-cosmos-default.log 2>&1
+
+# disable checking for upgrades (it fails anyway due to rootfs size limitations)
+uci set attendedsysupgrade.client.login_check_for_upgrades='0'
 
 # disable Password-Login for SSH = only allow authorized_keys
 uci set dropbear.main.PasswordAuth='off'
