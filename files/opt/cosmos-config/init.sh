@@ -143,6 +143,22 @@ if [[ $(cat init.conf | cut -c 0-25) != "commissioned successfully" ]]; then
             echo "$(date +"%F_%H%M%S") docker still not ready, give up an continue without mongodb pulled..." >> init.log
         fi
     fi
+    #switch root terminal to bash
+    if [ ! $(cat /etc/passwd | grep root:/bin/bash) ]; then
+        sed -i -e 's@root:/bin/ash@root:/bin/bash@g' /etc/passwd
+        echo "$(date +"%F_%H%M%S") switch root terminal to bash..." >> init.log
+    fi
+    #add cosmos user (for terminal in cosmos)
+    if [ ! $(cat /etc/passwd | grep cosmos) ]; then
+        echo "cosmos:x:1000:1000:cosmos:/opt/cosmos:/bin/bash" >> /etc/passwd
+        echo "$(date +"%F_%H%M%S") add cosmos user..." >> init.log
+    fi
+    if [ ! $(cat /etc/sudoers | grep cosmos) ]; then
+        echo "cosmos ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+        echo "$(date +"%F_%H%M%S") add cosmos to pw-less root..." >> init.log
+    fi
+    echo "$(date +"%F_%H%M%S") last reboot to have a clean state..." >> init.log
+    reboot && exit 0
 fi
 
 #add licence from file (if file exists)
