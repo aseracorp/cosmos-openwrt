@@ -27,7 +27,7 @@ on:
         description: 'Additional packages to include (space-separated)'
         required: false
         type: string
-        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g'
+        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo'
       files:
         description: 'Folder with additional files (f.e. files/etc/uci-defaults)'
         required: false
