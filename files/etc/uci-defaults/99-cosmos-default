@@ -10,8 +10,8 @@
 # enable cosmos on boot
 cosmos=1
 
-if [ -n "$(ifconfig -a | grep 'wlan0')" ]; then
-  wlan_name="Cosmos-Cloud-$(ifconfig -a | grep -m 1 'wlan0' | tail -c 8 | head -c 5 | tr -d : )"
+if [ -n "$(ifconfig -a | grep 'phy0\|wlan0')" ]; then
+  wlan_name="Cosmos-Cloud-$(ifconfig -a | grep -m 1 'phy0\|wlan0' | tail -c 8 | head -c 5 | tr -d : )"
   wlan_password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 13; echo)
 fi
 root_password=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 13; echo)
