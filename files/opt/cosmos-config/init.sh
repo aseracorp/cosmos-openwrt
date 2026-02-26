@@ -179,6 +179,16 @@ hostname=$(yq '.HTTPConfig.Hostname' /opt/cosmos-config/cosmos.config.json -o x)
 if [ -n "${hostname}" ]; then
     if [ "${hostname}" != "${HOSTNAME}" ]; then
 
+
+        #add licence from file (if file exists)
+        if [ -n "${LICENCE}" ]; then
+            echo "$(date +"%F_%H%M%S") found licence, add Licence and stable market to config..." >> init.log
+            Licence=${LICENCE} yq -i '.Licence = env(Licence)' /opt/cosmos-config/cosmos.config.json
+        elif [ -f "/boot/licence" ]; then
+            echo "$(date +"%F_%H%M%S") found licence, add Licence and stable market to config..." >> init.log
+            Licence=$(cat /boot/licence) yq -i '.Licence = env(Licence)' /opt/cosmos-config/cosmos.config.json
+        fi
+
         #setup luci behind cosmos
         if [ "${HOSTNAME}" == "0.0.0.0" ]; then
             echo "$(date +"%F_%H%M%S") disable luci login..." >> init.log
