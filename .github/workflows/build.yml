@@ -112,7 +112,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.event.inputs.files }}/opt/cosmos/
-          key: ${{ runner.os }}-cosmosCloud-${{ env.cosmos_version }}
+          key: ${{ runner.os }}-${{ github.event.inputs.target }}-cosmosCloud-${{ env.cosmos_version }}
 
       - name: install Cosmos Cloud
         if: steps.cache-cosmosCloud.outputs.cache-hit != 'true'
@@ -121,7 +121,11 @@ jobs:
           mkdir -p ${{ github.event.inputs.files }}/opt/cosmos
           echo "Downloading Cosmos release $RELEASE..."
           RELEASE=${{ env.cosmos_version }}
-          ZIP_FILE="cosmos-cloud-${RELEASE#v}-arm64.zip"
+          if [ "${{ github.event.inputs.target }}" == "x86-64" ]; then
+            ZIP_FILE="cosmos-cloud-${RELEASE#v}-amd64.zip"
+          else
+            ZIP_FILE="cosmos-cloud-${RELEASE#v}-arm64.zip"
+          fi
           curl -L "https://github.com/azukaar/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}" -o "${ZIP_FILE}"
           curl -L "https://github.com/azukaar/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}.md5" -o "${ZIP_FILE}.md5"
           echo "Verifying MD5 checksum..."
@@ -140,14 +144,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.event.inputs.files }}/sbin/snapraid
-          key: ${{ runner.os }}-snapraid-${{ env.snapraid_version }}
+          key: ${{ runner.os }}-${{ github.event.inputs.target }}-snapraid-${{ env.snapraid_version }}
 
       - name: install Snapraid
         if: steps.cache-snapraid.outputs.cache-hit != 'true'
         run: |
           echo "INSTALLING SNAPRAID..."
           curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
-          tar -xf snapraid-${{ env.snapraid_version }}.tar.gz && cd snapraid-${{ env.snapraid_version }}/ && ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-static -pthread" --enable-mpers=check && make
+          if [ "${{ github.event.inputs.target }}" == "x86-64" ]; then
+            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz && cd snapraid-${{ env.snapraid_version }}/ && ./configure LDFLAGS="-static -pthread" --enable-mpers=check && make
+          else
+            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz && cd snapraid-${{ env.snapraid_version }}/ && ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-static -pthread" --enable-mpers=check && make
+          fi
+          rm -f ../${{ github.event.inputs.files }}/sbin/snapraid
           mkdir ../${{ github.event.inputs.files }}/sbin/ && mv snapraid ../${{ github.event.inputs.files }}/sbin/
 
       - name: add custom files
@@ -160,7 +169,7 @@ jobs:
         run: |
           make image PROFILE=${{ github.event.inputs.profile }} PACKAGES="${{ github.event.inputs.packages }}" FILES="${{ github.event.inputs.files }}" ROOTFS_PARTSIZE="${{ github.event.inputs.rootfs_partsize }}"
 
-      - if: ${{ env.owrt_version != 'snapshots'}}
+      - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target != 'x86-64' }}
         name: Upload factory image
         uses: actions/upload-artifact@v4
         with:
@@ -169,7 +178,7 @@ jobs:
           retention-days: 7
           compression-level: 0 # no compression
 
-      - if: ${{ env.owrt_version != 'snapshots'}}
+      - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target != 'x86-64' }}
         name: Upload sysupgrade image
         uses: actions/upload-artifact@v4
         with:
@@ -178,7 +187,7 @@ jobs:
           retention-days: 7
           compression-level: 0 # no compression
 
-      - if: ${{ env.owrt_version == 'snapshots'}}
+      - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target != 'x86-64' }}
         name: Upload factory image
         uses: actions/upload-artifact@v4
         with:
@@ -187,12 +196,48 @@ jobs:
           retention-days: 7
           compression-level: 0 # no compression
 
-      - if: ${{ env.owrt_version == 'snapshots'}}
+      - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target != 'x86-64' }}
         name: Upload sysupgrade image
         uses: actions/upload-artifact@v4
         with:
           name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
+          retention-days: 7
+          compression-level: 0 # no compression
+
+      - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target == 'x86-64' }}
+        name: Upload efi image
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi.img.gz
+          retention-days: 7
+          compression-level: 0 # no compression
+
+      - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target == 'x86-64' }}
+        name: Upload bios image
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined.img.gz
+          retention-days: 7
+          compression-level: 0 # no compression
+
+      - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target == 'x86-64' }}
+        name: Upload efi image
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi.img.gz
+          retention-days: 7
+          compression-level: 0 # no compression
+
+      - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target == 'x86-64' }}
+        name: Upload bios image
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined
+          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined.img.gz
           retention-days: 7
           compression-level: 0 # no compression
 
