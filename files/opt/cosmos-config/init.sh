@@ -2,7 +2,7 @@
 exec 3>&1 4>&2
 trap 'exec 2>&4 1>&3' 0 1 2 3
 exec 1>init.plain.log 2>&1
-# Everything below will go to the file 'init.log':
+# Everything below will go to the file 'init.plain.log':
 
 # should the docker volumes be copy on write? This enables compression but accelerates writes onto disk which is harmful for the disk with f.e. database-files. You then need to disable it manually (for databases) on a subfolder basis with 'chattr +C <path-to-subfolder>'. !! Only applies to new files created !!
 # cow=true
@@ -13,16 +13,23 @@ if [ -f /boot/.env  ]; then source /boot/.env; fi
 touch init.conf
 touch /tmp/cosmos.log
 touch /tmp/cosmos.plain.log
+MODEL=$(serial FTRS)
 
 readdisk () {
     #read-out disk infos
     root_partition=$(basename $(readlink -f /sys/dev/block/"$(awk -e '$9=="/dev/root"{print $3}' /proc/self/mountinfo)"))
     disk=$(echo $(lsblk --list --noheadings --paths --output PKNAME /dev/${root_partition}) | sed "s@/dev/@@")
-    new_part_id=$( echo $(( $(echo $root_partition | sed "s@${disk}p@@") + 1 )) )
+    if [[ "$disk" =~ sd[a-z] ]]; then
+        new_part_id=$( echo $(( $(echo $root_partition | sed "s@${disk}@@") + 1 )) )
+        new_part="${disk}${new_part_id}"
+    else
+        new_part_id=$( echo $(( $(echo $root_partition | sed "s@${disk}p@@") + 1 )) )
+        new_part="${disk}p${new_part_id}"
+    fi
 }
 
 #flash image to eMMC
-if [ -n $EMMC ]; then
+if [ -n "${EMMC}" ]; then
     readdisk
     if [ $disk != "mmcblk0" ]; then
         echo "$(date +"%F_%H%M%S") Found EMMC-key, writing image to eMMC..." >> init.log
@@ -39,7 +46,7 @@ fi
 if [[ $(cat init.conf) = "commissioned successfully with btrfs-storage" ]]; then
     if [ "$STORAGE" = true ]; then
         readdisk
-        if [ ! -e /dev/"${disk}p${new_part_id}" ]; then
+        if [ ! -e /dev/"${new_part}" ]; then
             # missing partition despite state "commission successfully", force re-init
             firstboot -y && reboot && exit 0
         fi
@@ -47,11 +54,12 @@ if [[ $(cat init.conf) = "commissioned successfully with btrfs-storage" ]]; then
 fi
 
 #add symlink for config
-if [ ! -L /var/lib/cosmos ]; then
-    if [ -d /var/lib/cosmos ]; then rm -R /var/lib/cosmos; fi
+while [ ! -L /var/lib/cosmos ]; do
+    while [ -d /var/lib/cosmos ]; do rm -R /var/lib/cosmos && sleep 5; done
     ln -s /opt/cosmos-config/ /var/lib/cosmos
     echo "$(date +"%F_%H%M%S") var/lib/cosmos: create symlink to persist storage..." >> /tmp/init.log
-fi
+    sleep 5
+done
 if [ ! -L cosmos.log  ]; then
     if [ -f cosmos.log  ]; then rm cosmos.log; fi
     ln -s /tmp/cosmos.log /opt/cosmos-config/cosmos.log
@@ -63,30 +71,37 @@ if [ ! -L cosmos.plain.log  ]; then
     echo "$(date +"%F_%H%M%S") cosmos.plain.log: create symlink to tmp..." >> /tmp/init.log
 fi
 
+#inital commissioning
 if [[ $(cat init.conf | cut -c 0-25) != "commissioned successfully" ]]; then
     echo "$(date +"%F_%H%M%S") start init..." >> init.log
+
+    if [ -f config.txt ]; then
+        cat config.txt > /boot/config.txt && rm config.txt
+        echo "$(date +"%F_%H%M%S") update config.txt..." >> init.log
+    fi
+
     #mount eMMC (btrfs) filesystem (used for cosmos)
     if [ "$STORAGE" = true ]; then
 
         readdisk
         start_sector=$(( $(cat /sys/block/${disk}/${root_partition}/start) + $(cat /sys/block/${disk}/${root_partition}/size) ))
 
-        if [ ! -e /dev/"${disk}p${new_part_id}" ]; then
+        if [ ! -e /dev/"${new_part}" ]; then
             echo "$(date +"%F_%H%M%S") add 3rd partition (btrfs) on empty space (start-sector: ${start_sector})..." >> init.log
             # add & format storage partition (use all empty space after root partition)
             echo "n
             p
-            $new_part_id
-            $start_sector
+            ${new_part_id}
+            ${start_sector}
 
             w" | fdisk -W always /dev/"${disk}"
             echo "$(date +"%F_%H%M%S") format 3rd partition (btrfs)..." >> init.log
             sleep 5
             partx -u /dev/"${disk}"
-            mkfs.btrfs /dev/"${disk}p${new_part_id}"
+            mkfs.btrfs /dev/"${new_part}"
             sleep 5
         fi
-        if [[ $(findmnt /opt/docker/ -no SOURCE) != "/dev/${disk}p${new_part_id}" ]]; then
+        if [[ $(findmnt /opt/docker/ -no SOURCE) != "/dev/${new_part}" ]]; then
             partx -u /dev/"${disk}"
             #stop docker service
             service dockerd stop
@@ -105,7 +120,7 @@ if [[ $(cat init.conf | cut -c 0-25) != "commissioned successfully" ]]; then
             uci commit dockerd
             service dockerd start
         fi
-        if [[ $(findmnt /opt/docker/ -no SOURCE) = "/dev/${disk}p${new_part_id}" ]]; then
+        if [[ $(findmnt /opt/docker/ -no SOURCE) = "/dev/${new_part}" ]]; then
             if [ -z ${cow+x} ]; then
                 echo "$(date +"%F_%H%M%S") disable copy on write on docker volumes..." >> init.log
                 mkdir -p /opt/docker/volumes
@@ -125,10 +140,12 @@ if [[ $(cat init.conf | cut -c 0-25) != "commissioned successfully" ]]; then
         echo "$(date +"%F_%H%M%S") init finished without btrfs-storage" >> init.log
         echo "commissioned successfully without btrfs-storage" > init.conf
     fi
+
     #enable mdns with reflector
     echo "$(date +"%F_%H%M%S") enable mdns with reflector..." >> init.log
     sed -i 's/enable-reflector=no/enable-reflector=yes/g' /etc/avahi/avahi-daemon.conf
     service avahi-daemon restart
+
     # pull mongodb image
     if ping -i 5 -c 5 -A hub.docker.com; then
         count=1
@@ -157,28 +174,20 @@ if [[ $(cat init.conf | cut -c 0-25) != "commissioned successfully" ]]; then
         echo "cosmos ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
         echo "$(date +"%F_%H%M%S") add cosmos to pw-less root..." >> init.log
     fi
+
+    #start cosmos & set LED's to normal mode, normal operation
+    cd /opt/cosmos && ./start.sh && sleep 5 &&
+
     echo "$(date +"%F_%H%M%S") last reboot to have a clean state..." >> init.log
     reboot && exit 0
-fi
-
-#add licence from file (if file exists)
-if [ -z "$(yq '.Licence' /opt/cosmos-config/cosmos.config.json -o x)" ]; then
-    if [ -n "${LICENCE}" ]; then
-        echo "$(date +"%F_%H%M%S") found licence, add to config..." >> init.log
-        yq -i '.Licence = strenv(LICENCE)' /opt/cosmos-config/cosmos.config.json
-    elif [ -f "/boot/licence" ]; then
-        echo "$(date +"%F_%H%M%S") found licence, add to config..." >> init.log
-        Licence=$(cat /boot/licence)
-        yq -i '.Licence = strenv(Licence)' /opt/cosmos-config/cosmos.config.json
-    fi
 fi
 
 hostname=$(yq '.HTTPConfig.Hostname' /opt/cosmos-config/cosmos.config.json -o x)
 
 #on change of hostname, do this:
 if [ -n "${hostname}" ]; then
-    if [ "${hostname}" != "${HOSTNAME}" ]; then
 
+    if [ "${hostname}" != "${HOSTNAME}" ]; then
 
         #add licence from file (if file exists)
         if [ -n "${LICENCE}" ]; then
