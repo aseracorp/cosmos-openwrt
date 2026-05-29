@@ -13,7 +13,6 @@ if [ -f /boot/.env  ]; then source /boot/.env; fi
 touch init.conf
 touch /tmp/cosmos.log
 touch /tmp/cosmos.plain.log
-MODEL=$(serial FTRS)
 
 readdisk () {
     #read-out disk infos
@@ -43,7 +42,7 @@ if [ -n "${EMMC}" ]; then
 fi
 
 # workaround for raspberry pi retaining settings after reflash (https://forum.openwrt.org/t/pi-remembers-my-mistakes/164450/14)
-if [[ $(cat init.conf) = "commissioned successfully with btrfs-storage" ]]; then
+if [[ $(cat /tmp/sysinfo/model) = *"Raspberry"* ]] && [[ $(cat init.conf) = "commissioned successfully with btrfs-storage" ]]; then
     if [ "$STORAGE" = true ]; then
         readdisk
         if [ ! -e /dev/"${new_part}" ]; then
@@ -55,10 +54,10 @@ fi
 
 #add symlink for config
 while [ ! -L /var/lib/cosmos ]; do
-    while [ -d /var/lib/cosmos ]; do rm -R /var/lib/cosmos && sleep 5; done
+    while [ -d /var/lib/cosmos ]; do rm -R /var/lib/cosmos && sleep 2; done
     ln -s /opt/cosmos-config/ /var/lib/cosmos
     echo "$(date +"%F_%H%M%S") var/lib/cosmos: create symlink to persist storage..." >> /tmp/init.log
-    sleep 5
+    sleep 2
 done
 if [ ! -L cosmos.log  ]; then
     if [ -f cosmos.log  ]; then rm cosmos.log; fi
@@ -96,26 +95,29 @@ if [[ $(cat init.conf | cut -c 0-25) != "commissioned successfully" ]]; then
 
             w" | fdisk -W always /dev/"${disk}"
             echo "$(date +"%F_%H%M%S") format 3rd partition (btrfs)..." >> init.log
-            sleep 5
+            sleep 1
             partx -u /dev/"${disk}"
             mkfs.btrfs /dev/"${new_part}"
-            sleep 5
+            sleep 1
         fi
         if [[ $(findmnt /opt/docker/ -no SOURCE) != "/dev/${new_part}" ]]; then
             partx -u /dev/"${disk}"
             #stop docker service
             service dockerd stop
             # clear docker dir
-            rm -R /opt/docker/*
+            sleep 1 && rm -R /opt/docker/*
             # mount btrfs partition to docker dir
             echo "$(date +"%F_%H%M%S") mount 3rd partition (btrfs)..." >> init.log
-            sleep 5 && block detect | uci import fstab
-            uci set fstab.@mount[-1].target='/opt/docker'
-            uci set fstab.@mount[-1].enabled='1'
-            uci set fstab.@mount[-1].options='compress=zstd:10'
+            block detect | uci import fstab
+            #get new part id
+            new_part_id=$(uci show fstab | grep "/mnt/${new_part}" | cut -c 14-14)
+            uci set fstab.@mount[${new_part_id}].target='/opt/docker'
+            uci set fstab.@mount[${new_part_id}].enabled='1'
+            uci set fstab.@mount[${new_part_id}].options='compress=zstd:10'
             uci commit fstab
             #set btrfs dockerd storage driver
             echo "$(date +"%F_%H%M%S") switch docker storage driver to btrfs..." >> init.log
+            partx -u /dev/"${disk}"
             uci set dockerd.globals.storage_driver="btrfs"
             uci commit dockerd
             service dockerd start
@@ -221,8 +223,41 @@ if [ -n "${hostname}" ]; then
             sed -i "s@http.redirect('https://${HOSTNAME}/cosmos-ui/');@http.redirect('https://${hostname}/cosmos-ui/');@g" /usr/share/ucode/luci/controller/admin/index.uc
         fi
 
+        #if hostname gets deleted, delete dns-resolving to hostname
+        #if [ "${HOSTNAME}" != *".local" ] && [[ ! "${HOSTNAME}" =~ ^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; then
+        #    uci del dhcp.@dnsmasq[0].address
+        #fi
+
+        localIp=$(ip route get 1.1.1.1 | awk -F"src " 'NR==1{split($2,a," ");print a[1]}')
+
+        #allow private address for cosmos FQDN
+        fqdn=`echo "${hostname}" | grep -P '(?=^.{1,254}$)(^(?>(?!\d+\.)[a-zA-Z0-9_\-]{1,63}\.?)+(?:[a-zA-Z]{2,})$)'`
+        if [[ -n "${fqdn}" ]]; then
+            #uci add_list dhcp.@dnsmasq[0].address='/${hostname}/${myip}'
+            #uci commit dhcp
+            uci set dhcp.@dnsmasq[0].localservice='0'
+            uci del_list dhcp.@dnsmasq[0].rebind_domain="${HOSTNAME}"
+            uci add_list dhcp.@dnsmasq[0].rebind_domain="${hostname}"
+            uci del_list dhcp.@dnsmasq[0].address="/${HOSTNAME}/${LOCALIP}')"
+            uci add_list dhcp.@dnsmasq[0].address="/${hostname}/${localIp}')"
+            uci commit dhcp
+            service dnsmasq restart
+            sleep 2
+
+            ip=$(nslookup ${hostname} | awk -F': ' 'NR==6 { print $2 } ')
+            re='^(0*(1?[0-9]{1,2}|2([0-4][0-9]|5[0-5]))\.){3}'
+                re+='0*(1?[0-9]{1,2}|2([0-4][0-9]|5[0-5]))$'
+            if [[ ! $ip =~ $re ]]; then
+                uci del_list dhcp.@dnsmasq[0].server="/${HOSTNAME}/1.1.1.1"
+                uci add_list dhcp.@dnsmasq[0].server="/${hostname}/1.1.1.1"
+                uci commit dhcp
+                service dnsmasq restart
+            fi
+        fi
+
         #save new hostname
-        sed -i "s/HOSTNAME=.*;/HOSTNAME=${hostname}/g" ./.env
+        sed -i -r "s@(HOSTNAME=).*@\1${hostname}@g" ./.env
+        sed -i -r "s@(LOCALIP=).*@\1${localIp}@g" ./.env
 
         #add OpenWRT GUI as App
         echo "$(date +"%F_%H%M%S") add OpenWRT to GUI as App..." >> init.log
@@ -275,7 +310,7 @@ if [ -n "${hostname}" ]; then
                 "TunnelVia": "",
                 "TunneledHost": "",
                 "ExtraHeaders": null
-                } ) | with(.HTTPConfig.ProxyConfig.Routes[]; select(.Name == "OpenWrt") | .Host |= envsubst)' /opt/cosmos-config/cosmos.config.json
+                } ) | with(.HTTPConfig.ProxyConfig.Routes[]; select(.Name == "OpenWrt") | .Host = env(owrt_hostname))' /opt/cosmos-config/cosmos.config.json
 
     fi
 fi

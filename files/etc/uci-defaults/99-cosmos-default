@@ -29,6 +29,7 @@ uci set dropbear.main.PasswordAuth='off'
 uci set dropbear.main.RootPasswordAuth='off'
 uci commit dropbear
 
+if [ -f "/opt/cosmos-config/.env" ]; then source /opt/cosmos-config/.env; fi
 if [ -f "/boot/.env" ]; then source /boot/.env; fi
 if [ "${SSH_KEY}" ]; then echo "${SSH_KEY}" >> /etc/dropbear/authorized_keys ; fi
 
@@ -48,7 +49,20 @@ else
   uci set network.lan11.device='@lan'
   uci set network.lan11.proto='static'
   uci set network.lan11.ipaddr='192.168.0.11/24'
+  uci set dhcp.lan11=dhcp
+  uci set dhcp.lan11.interface='lan11'
+  uci set dhcp.lan11.start='100'
+  uci set dhcp.lan11.limit='150'
+  uci set dhcp.lan11.leasetime='12h'
+  uci del dhcp.@dnsmasq[0].authoritative
+  #uci del dhcp.@dnsmasq[0].nonwildcard
+  #uci del dhcp.@dnsmasq[0].boguspriv
+  #uci del dhcp.@dnsmasq[0].filterwin2k
+  #uci del dhcp.@dnsmasq[0].filter_aaaa
+  #uci del dhcp.@dnsmasq[0].filter_a
+  #uci del dhcp.@dnsmasq[0].nonegcache
   uci commit network
+  uci commit dhcp
   uci add_list firewall.@zone[0].network='lan11'
   uci commit firewall
 fi
@@ -87,7 +101,8 @@ if [ -n "$cosmos" ]; then
   uci commit system
 
   #store hostname in env-var
-  echo "HOSTNAME=0.0.0.0" >> /opt/cosmos-config/.env
+  echo "HOSTNAME=0.0.0.0" >> /opt/cosmos-config/.env  
+  echo "LOCALIP=$(ip route get 1.1.1.1 | awk -F"src " 'NR==1{split($2,a," ");print a[1]}')" >> /opt/cosmos-config/.env
 
   #switch luci to free ports
   echo "setup luci to free ports"
@@ -113,14 +128,6 @@ if [ -n "$cosmos" ]; then
   uci add firewall forwarding
   uci set firewall.@forwarding[-1].src='lan'
   uci set firewall.@forwarding[-1].dest='cosmos'
-<<<<<<< HEAD
-  #uci add firewall zone
-  #uci set firewall.@zone[-1].name='constellation'
-  #uci set firewall.@zone[-1].input='ACCEPT'
-  #uci set firewall.@zone[-1].output='ACCEPT'
-  #uci set firewall.@zone[-1].forward='REJECT'
-  #uci add_list firewall.@zone[-1].subnet='192.168.201.0/24'
-=======
   uci add firewall zone
   uci set firewall.@zone[-1].name='constellation'
   uci set firewall.@zone[-1].input='ACCEPT'
@@ -257,8 +264,8 @@ if [ -n "$cosmos" ]; then
 
   uci commit network
   uci commit mwan3
->>>>>>> 3ed946a (add constellation firewall rules)
   uci commit firewall
+
 fi
 
 echo "All done!"

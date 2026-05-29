@@ -1,0 +1,222 @@
+name: Build & Publish OpenWrt Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "master", "unstable" ]
+  pull_request:
+    branches: [ "master", "unstable" ]
+
+env:
+  SSH_KEY: ${{ secrets.SSH_KEY }}
+  owrt_version: '25.12.4'
+  snapraid_version: '14.5'
+  cosmos_version: 'latest'
+  packages: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap'
+  files: 'files'
+  rootfs_partsize: '896'
+  storage: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: install deps
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq musl-tools
+          version: 1.0
+          
+      - name: add env-vars & secrets
+        run: |
+          mkdir -p ${{ env.files }}/opt/cosmos-config
+          echo "STORAGE=${{ env.storage }}" >> ${{ env.files }}/opt/cosmos-config/.env
+          echo 'SSH_KEY="${{ secrets.SSH_KEY }}"' >> ${{ env.files }}/opt/cosmos-config/.env
+          ### copy folder to arm64
+          cp -R ${{ env.files }} ${{ env.files }}-arm64
+
+      - name: cache OpenWrt Imagebuilder
+        if: ${{ env.owrt_version  != 'snapshots' }}
+        id: cache-imagebuilder
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/imagebuilder-bcm27xx-bcm2711
+            openwrt/imagebuilder-x86-64
+          key: automatic-imagebuilder-${{ env.owrt_version }}
+
+      - name: Download OpenWrt Imagebuilder
+        if: steps.cache-imagebuilder.outputs.cache-hit != 'true'
+        uses: qoomon/actions--parallel-steps@v1
+        with:
+          steps: |
+            - name: Download for bcm27xx-bcm2711
+              run: | 
+                mkdir -p openwrt/bcm27xx-bcm2711 && cd openwrt/bcm27xx-bcm2711
+                if [ "${{ env.owrt_version }}" = "snapshots" ]; then
+                  curl -L "https://downloads.openwrt.org/snapshots/targets/bcm27xx/bcm2711/openwrt-imagebuilder-bcm27xx-bcm2711.Linux-x86_64.tar.zst" -o "openwrt-imagebuilder-bcm27xx-bcm2711.Linux-x86_64.tar.zst"
+                  curl -L "https://downloads.openwrt.org/snapshots/targets/bcm27xx/bcm2711/sha256sums" -o sha256sums
+                else
+                  curl -L "https://downloads.openwrt.org/releases/${{ env.owrt_version }}/targets/bcm27xx/bcm2711/openwrt-imagebuilder-${{ env.owrt_version }}-bcm27xx-bcm2711.Linux-x86_64.tar.zst" -o "openwrt-imagebuilder-${{ env.owrt_version }}-bcm27xx-bcm2711.Linux-x86_64.tar.zst"
+                  curl -L "https://downloads.openwrt.org/releases/${{ env.owrt_version }}/targets/bcm27xx/bcm2711/sha256sums" -o sha256sums
+                fi
+                sha256sum --check --ignore-missing sha256sums
+                tar --zstd -x -f openwrt-imagebuilder*-bcm27xx-bcm2711*
+                rm openwrt-imagebuilder-*.tar.zst && rm sha256sums
+                rm -Rf imagebuilder-bcm27xx-bcm2711/
+                mv openwrt-imagebuilder*-bcm27xx-bcm2711* ../imagebuilder-bcm27xx-bcm2711
+
+            - name: Download for x86-64
+              run: | 
+                mkdir -p openwrt/x86-64 && cd openwrt/x86-64
+                if [ "${{ env.owrt_version }}" = "snapshots" ]; then
+                  curl -L "https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-imagebuilder-x86-64.Linux-x86_64.tar.zst" -o "openwrt-imagebuilder-x86-64.Linux-x86_64.tar.zst"
+                  curl -L "https://downloads.openwrt.org/snapshots/targets/x86/64/sha256sums" -o sha256sums
+                else
+                  curl -L "https://downloads.openwrt.org/releases/${{ env.owrt_version }}/targets/x86/64/openwrt-imagebuilder-${{ env.owrt_version }}-x86-64.Linux-x86_64.tar.zst" -o "openwrt-imagebuilder-${{ env.owrt_version }}-x86-64.Linux-x86_64.tar.zst"
+                  curl -L "https://downloads.openwrt.org/releases/${{ env.owrt_version }}/targets/x86/64/sha256sums" -o sha256sums
+                fi
+                sha256sum --check --ignore-missing sha256sums
+                tar --zstd -x -f openwrt-imagebuilder*-x86-64*
+                rm openwrt-imagebuilder-*.tar.zst && rm sha256sums
+                rm -Rf imagebuilder-x86-64/
+                mv openwrt-imagebuilder*-x86-64* ../imagebuilder-x86-64
+
+      - name: get Cosmos Version
+        run: |
+          if [ "${{ env.cosmos_version }}" = "latest" ] ; then
+            cosmos_version=$(curl -s https://api.github.com/repos/azukaar/Cosmos-Server/releases/latest | grep "tag_name" | cut -d '"' -f 4)
+          elif [ "${{ env.cosmos_version }}" = "unstable" ] ; then
+            cosmos_version=$(jq -r 'map(select(.prerelease)) | first | .tag_name' <<< $(curl -s https://api.github.com/repos/azukaar/Cosmos-Server/releases))
+          else
+            cosmos_version="${{ env.cosmos_version }}"
+          fi
+          echo "cosmos_version=${cosmos_version}" >> "$GITHUB_ENV"
+
+      - name: cache Cosmos Cloud
+        id: cache-cosmosCloud
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.files }}/opt/cosmos/
+            ${{ env.files }}-arm64/opt/cosmos/
+          key: automatic-cosmosCloud-${{ env.cosmos_version }}
+
+      - name: install Cosmos Cloud
+        if: steps.cache-cosmosCloud.outputs.cache-hit != 'true'
+        uses: qoomon/actions--parallel-steps@v1
+        with:
+          steps: |
+            - name: install Cosmos Cloud amd64
+              run: |
+                echo "INSTALLING COSMOS CLOUD..."
+                rm -Rf ${{ env.files }}/opt/cosmos/
+                mkdir -p ${{ env.files }}/opt/cosmos
+                echo "Downloading Cosmos release $RELEASE..."
+                RELEASE=${{ env.cosmos_version }}
+                ZIP_FILEamd64="cosmos-cloud-${RELEASE#v}-amd64.zip" 
+                curl -L "https://github.com/aseracorp/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILEamd64}" -o "${ZIP_FILEamd64}"
+                curl -L "https://github.com/aseracorp/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILEamd64}.md5" -o "${ZIP_FILEamd64}.md5"
+                echo "Verifying MD5 checksum..."
+                md5sum -c "${ZIP_FILEamd64}.md5"
+                echo "Extracting files..."
+                unzip -o "${ZIP_FILEamd64}"
+                mv cosmos-cloud-${RELEASE#v}/* ${{ env.files }}/opt/cosmos/
+            - name: install Cosmos Cloud arm64
+              run: |
+                echo "INSTALLING COSMOS CLOUD..."
+                rm -Rf ${{ env.files }}-arm64/opt/cosmos/
+                mkdir -p ${{ env.files }}-arm64/opt/cosmos
+                echo "Downloading Cosmos release $RELEASE..."
+                RELEASE=${{ env.cosmos_version }}
+                ZIP_FILEarm64="cosmos-cloud-${RELEASE#v}-arm64.zip"
+                curl -L "https://github.com/aseracorp/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILEarm64}" -o "${ZIP_FILEarm64}"
+                curl -L "https://github.com/aseracorp/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILEarm64}.md5" -o "${ZIP_FILEarm64}.md5"
+                echo "Verifying MD5 checksum..."
+                md5sum -c "${ZIP_FILEarm64}.md5"
+                echo "Extracting files..."
+                unzip -o "${ZIP_FILEarm64}"
+                mv cosmos-cloud-${RELEASE#v}-arm64/* ${{ env.files }}-arm64/opt/cosmos/
+
+      - name: cache Snapraid
+        id: cache-snapraid
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.files }}/bin/snapraid
+            ${{ env.files }}-arm64/bin/snapraid
+          key: automatic-snapraid-${{ env.snapraid_version }}
+
+      - name: install Snapraid
+        uses: qoomon/actions--parallel-steps@v1
+        if: steps.cache-snapraid.outputs.cache-hit != 'true'
+        with:
+          steps: |
+            - name: build snapraid amd64
+              run: |
+                echo "INSTALLING SNAPRAID AMD64..."
+                mkdir -p snapraid-amd64 && cd snapraid-amd64
+                curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
+                tar -xf snapraid-${{ env.snapraid_version }}.tar.gz
+                cd snapraid-${{ env.snapraid_version }}/
+                CC="musl-gcc" ./configure LDFLAGS="-s -w -pthread"
+                make
+                make check
+                upx -9 snapraid
+                rm -f ../../${{ env.files }}/bin/snapraid
+                mkdir -p ../../${{ env.files }}/bin/
+                mv snapraid ../../${{ env.files }}/bin/
+
+            - name: build snapraid arm64
+              run: |
+                echo "INSTALLING SNAPRAID ARM64..."
+                mkdir -p snapraid-arm64 && cd snapraid-arm64
+                curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
+                tar -xf snapraid-${{ env.snapraid_version }}.tar.gz
+                cd snapraid-${{ env.snapraid_version }}/
+                CC="musl-gcc" ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-s -w -pthread"
+                make
+                make check
+                upx -9 snapraid
+                rm -f ../../${{ env.files }}-arm64/bin/snapraid
+                mkdir -p ../../${{ env.files }}-arm64/bin/
+                mv snapraid ../../${{ env.files }}-arm64/bin/
+
+      - name: add custom files
+        run: |
+          chmod -R 755 ${{ env.files }}
+          cp -R ${{ env.files }} openwrt/imagebuilder-x86-64/${{ env.files }}
+          chmod -R 755 ${{ env.files }}-arm64
+          cp -R ${{ env.files }}-arm64 openwrt/imagebuilder-bcm27xx-bcm2711/${{ env.files }}
+
+      - uses: qoomon/actions--parallel-steps@v1
+        with:
+          steps: |
+            - name: build image RPI-4
+              run: |
+                cd openwrt/imagebuilder-bcm27xx-bcm2711
+                make image PROFILE=rpi-4 PACKAGES="${{ env.packages }}" FILES="${{ env.files }}" ROOTFS_PARTSIZE="${{ env.rootfs_partsize }}"
+
+            - name: build image AMD64
+              run: |
+                cd openwrt/imagebuilder-x86-64
+                make image PROFILE=generic PACKAGES="${{ env.packages }}" FILES="${{ env.files }}" ROOTFS_PARTSIZE="${{ env.rootfs_partsize }}"
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1      
+        with:
+          artifacts: "openwrt/imagebuilder-bcm27xx-bcm2711/bin/targets/bcm27xx/bcm2711/*squashfs*.img.gz, openwrt/imagebuilder-x86-64/bin/targets/x86/64/*squashfs*.img.gz"
+          tag: v${{ env.cosmos_version }}-${{ env.owrt_version }}
+          name: Cosmos ${{ env.cosmos_version }} OpenWrt ${{ env.owrt_version }}
+          allowUpdates: true
+
+      - name: cleanup before caching
+        working-directory: openwrt/
+        run: |
+          rm -R imagebuilder-bcm27xx-bcm2711/${{ env.files }}/
+          rm -R imagebuilder-bcm27xx-bcm2711/bin/
+          rm -R imagebuilder-x86-64/${{ env.files }}/
+          rm -R imagebuilder-x86-64/bin/
