@@ -7,7 +7,9 @@ exec 1>&1 2>&1
 
 
 #set LED's to normal mode, startup
-cd /opt/cosmos-config && ./init.sh
+cd /opt/cosmos-config
+chmod +x init.sh
+./init.sh
 
 #start cosmos & set LED's to normal mode, normal operation
 cd /opt/cosmos && ./start.sh

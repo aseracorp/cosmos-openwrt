@@ -1,5 +1,4 @@
 #!/bin/sh /etc/rc.common
-# resi fix KNX on co-processor
 # Copyright aseracorp 2025
 
 START=97

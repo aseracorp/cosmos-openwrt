@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       cosmos_version:
-        description: 'Cosmos version (latest, unstable or exact: v0.19.0-unstable4)'
+        description: 'Cosmos version (latest, unstable or exact: v0.22.19)'
         required: false
         type: string
         default: 'latest'
       owrt_version:
-        description: 'OpenWrt version (e.g., 24.10.3)'
+        description: 'OpenWrt version (e.g., 25.12.4)'
         required: false
         type: string
-        default: '24.10.4'
+        default: '25.12.4'
       target:
         description: 'Target architecture (e.g., bcm27xx-bcm2711)'
         required: true
@@ -27,7 +27,7 @@ on:
         description: 'Additional packages to include (space-separated)'
         required: false
         type: string
-        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo'
+        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap'
       files:
         description: 'Folder with additional files (f.e. files/etc/uci-defaults)'
         required: false
@@ -45,9 +45,9 @@ on:
         default: true
 
 env:
+  SSH_KEY: ${{ secrets.SSH_KEY }}
   owrt_version: 'snapshots'
-  cosmos_version: ''
-  snapraid_version: '12.4'
+  snapraid_version: '14.5'
 
 jobs:
   build:
@@ -69,7 +69,7 @@ jobs:
       - name: install deps
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq
+          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq musl-tools
           version: 1.0
 
       - name: cache OpenWrt Imagebuilder
@@ -94,6 +94,7 @@ jobs:
           sha256sum --check --ignore-missing sha256sums
           tar --zstd -x -f openwrt-imagebuilder-*
           rm openwrt-imagebuilder-*.tar.zst && rm sha256sums
+          rm -Rf openwrt-imagebuilder/
           mv openwrt-imagebuilder-* openwrt-imagebuilder
 
       - name: get Cosmos Version
@@ -118,6 +119,7 @@ jobs:
         if: steps.cache-cosmosCloud.outputs.cache-hit != 'true'
         run: |
           echo "INSTALLING COSMOS CLOUD..."
+          rm -Rf ${{ github.event.inputs.files }}/opt/cosmos/
           mkdir -p ${{ github.event.inputs.files }}/opt/cosmos
           echo "Downloading Cosmos release $RELEASE..."
           RELEASE=${{ env.cosmos_version }}
@@ -126,18 +128,23 @@ jobs:
           else
             ZIP_FILE="cosmos-cloud-${RELEASE#v}-arm64.zip"
           fi
-          curl -L "https://github.com/azukaar/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}" -o "${ZIP_FILE}"
-          curl -L "https://github.com/azukaar/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}.md5" -o "${ZIP_FILE}.md5"
+          curl -L "https://github.com/aseracorp/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}" -o "${ZIP_FILE}"
+          curl -L "https://github.com/aseracorp/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}.md5" -o "${ZIP_FILE}.md5"
           echo "Verifying MD5 checksum..."
           md5sum -c "${ZIP_FILE}.md5"
           echo "Extracting files..."
           unzip -o "${ZIP_FILE}"
-          mv cosmos-cloud-${RELEASE#v}-arm64/* ${{ github.event.inputs.files }}/opt/cosmos/
+          if [ "${{ github.event.inputs.target }}" == "x86-64" ]; then
+            mv cosmos-cloud-${RELEASE#v}/* ${{ github.event.inputs.files }}/opt/cosmos/
+          else
+            mv cosmos-cloud-${RELEASE#v}-arm64/* ${{ github.event.inputs.files }}/opt/cosmos/
+          fi
 
       - name: add env-vars
         run: |
           mkdir -p ${{ github.event.inputs.files }}/opt/cosmos-config
           echo "STORAGE=${{ github.event.inputs.storage }}" >> ${{ github.event.inputs.files }}/opt/cosmos-config/.env
+          echo 'SSH_KEY="${{ secrets.SSH_KEY }}"' >> ${{ github.event.inputs.files }}/opt/cosmos-config/.env
 
       - name: cache Snapraid
         id: cache-snapraid
@@ -152,12 +159,22 @@ jobs:
           echo "INSTALLING SNAPRAID..."
           curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
           if [ "${{ github.event.inputs.target }}" == "x86-64" ]; then
-            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz && cd snapraid-${{ env.snapraid_version }}/ && ./configure LDFLAGS="-static -pthread" --enable-mpers=check && make
+            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz
+            cd snapraid-${{ env.snapraid_version }}/
+            CC="musl-gcc" ./configure LDFLAGS="-s -w -pthread"
+            make
+            make check
           else
-            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz && cd snapraid-${{ env.snapraid_version }}/ && ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-static -pthread" --enable-mpers=check && make
+            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz
+            cd snapraid-${{ env.snapraid_version }}/
+            CC="musl-gcc" ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-s -w -pthread"
+            make
+            make check
           fi
+          upx -9 snapraid
           rm -f ../${{ github.event.inputs.files }}/sbin/snapraid
-          mkdir ../${{ github.event.inputs.files }}/sbin/ && mv snapraid ../${{ github.event.inputs.files }}/sbin/
+          mkdir ../${{ github.event.inputs.files }}/sbin/
+          mv snapraid ../${{ github.event.inputs.files }}/sbin/
 
       - name: add custom files
         run: |
