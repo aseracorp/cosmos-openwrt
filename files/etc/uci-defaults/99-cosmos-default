@@ -6,6 +6,8 @@
 
 # if left commented, LAN will be set to dhcp client
 # lan_ip_address="192.168.1.1"
+# SIM_PIN="1234"
+# SIM_APN="internet"
 
 # enable cosmos on boot
 cosmos=1
@@ -29,11 +31,11 @@ uci set dropbear.main.PasswordAuth='off'
 uci set dropbear.main.RootPasswordAuth='off'
 uci commit dropbear
 
-if [ -f "/opt/cosmos-config/.env" ]; then source /opt/cosmos-config/.env; fi
+if [ -f "/etc/cosmos/.env" ]; then source /etc/cosmos/.env; fi
 if [ -f "/boot/.env" ]; then source /boot/.env; fi
 if [ "${SSH_KEY}" ]; then echo "${SSH_KEY}" >> /etc/dropbear/authorized_keys ; fi
 
-echo "PASSWD=$root_password" >> /opt/cosmos-config/.env
+echo "PASSWD=$root_password" >> /etc/cosmos/.env
 
 # Configure LAN
 # More options: https://openwrt.org/docs/guide-user/base-system/basic-networking
@@ -67,6 +69,16 @@ else
   uci commit firewall
 fi
 
+# Configure WAN
+if [[ $(ip a | grep eth1) ]]; then
+  uci set network.wan=interface
+  uci set network.wan.proto='dhcp'
+  uci set network.wan.device='eth1'
+  uci set network.globals.packet_steering='1'
+  uci set network.wan.multipath='off'
+  uci commit network
+fi
+
 # Configure WLAN
 # More options: https://openwrt.org/docs/guide-user/network/wifi/basic#wi-fi_interfaces
 if [ -n "$wlan_name" -a -n "$wlan_password" -a ${#wlan_password} -ge 8 ]; then
@@ -93,6 +105,7 @@ fi
 
 # setup cosmos
 if [ -n "$cosmos" ]; then
+  echo "$(date +"%F_%H%M%S") setup OpenWrt for cosmos..." >> /etc/cosmos/init-script.log
   
   #set hostname & Timezone
   uci set system.@system[0].hostname="cosmos-cloud-$(ifconfig -a | grep -m 1 'eth0' | tail -c 8 | head -c 5 | tr -d : )"
@@ -101,8 +114,8 @@ if [ -n "$cosmos" ]; then
   uci commit system
 
   #store hostname in env-var
-  echo "HOSTNAME=0.0.0.0" >> /opt/cosmos-config/.env  
-  echo "LOCALIP=$(ip route get 1.1.1.1 | awk -F"src " 'NR==1{split($2,a," ");print a[1]}')" >> /opt/cosmos-config/.env
+  echo "HOSTNAME=0.0.0.0" >> /etc/cosmos/.env  
+  echo "LOCALIP=$(ip route get 1.1.1.1 | awk -F"src " 'NR==1{split($2,a," ");print a[1]}')" >> /etc/cosmos/.env
 
   #switch luci to free ports
   echo "setup luci to free ports"
@@ -225,6 +238,7 @@ if [ -n "$cosmos" ]; then
   uci set mwan3.default_rule_v6.use_policy='default'
 
   if [ -e /dev/cdc-wdm0 ]; then
+    echo "$(date +"%F_%H%M%S") found LTE-module, setup wwan interface..." >> /etc/cosmos/init-script.log
     uci set network.wwan=interface
     uci set network.wwan.proto='qmi'
     #uci set network.globals.packet_steering='1'
@@ -260,6 +274,10 @@ if [ -n "$cosmos" ]; then
     uci add_list mwan3.balanced.use_member='wwan_m4_w1'
     uci add_list mwan3.default.use_member='wwan_m4_w1'
     uci set mwan3.wwan.enabled='1'
+    if [ "${SIM_APN}" ]; then uci set network.WWAN.apn="${SIM_APN}" ; else uci set network.WWAN.apn='internet'; fi
+    if [ "${SIM_PIN}" ]; then uci set network.LTE.pincode="${SIM_PIN}" ; fi
+  else
+    echo "$(date +"%F_%H%M%S") no LTE-module found, continue..." >> /etc/cosmos/init-script.log
   fi
 
   uci commit network

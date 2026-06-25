@@ -12,7 +12,7 @@ env:
   owrt_version: '25.12.4'
   snapraid_version: '14.5'
   cosmos_version: 'latest'
-  packages: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap'
+  packages: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep'
   files: 'files'
   rootfs_partsize: '896'
   storage: true
@@ -21,6 +21,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      
+      - name: free up space on gh runner (otherwise it'll run out of space)
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          rm_cmd: "rmz"
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+
       - name: Checkout repository
         uses: actions/checkout@v5
 
@@ -32,9 +45,9 @@ jobs:
           
       - name: add env-vars & secrets
         run: |
-          mkdir -p ${{ env.files }}/opt/cosmos-config
-          echo "STORAGE=${{ env.storage }}" >> ${{ env.files }}/opt/cosmos-config/.env
-          echo 'SSH_KEY="${{ secrets.SSH_KEY }}"' >> ${{ env.files }}/opt/cosmos-config/.env
+          mkdir -p ${{ env.files }}/etc/cosmos
+          echo "STORAGE=${{ env.storage }}" >> ${{ env.files }}/etc/cosmos/.env
+          echo 'SSH_KEY="${{ secrets.SSH_KEY }}"' >> ${{ env.files }}/etc/cosmos/.env
           ### copy folder to arm64
           cp -R ${{ env.files }} ${{ env.files }}-arm64
 

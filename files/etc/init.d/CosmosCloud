@@ -1,6 +1,6 @@
 #!/bin/sh /etc/rc.common
 # description: Cosmos Cloud service
-# processname: /opt/cosmos-config/start.sh
+# processname: /etc/cosmos/start.sh
 
 START=100
 STOP=01
@@ -9,7 +9,7 @@ USE_PROCD=1
 
 start_service() {
         procd_open_instance
-        procd_set_param command /bin/bash "/opt/cosmos-config/start.sh"
+        procd_set_param command /bin/bash "/bin/CosmosCloud"
         procd_append_param command daemon
         procd_set_param pidfile /var/run/CosmosCloud.pid
         procd_set_param term_timeout 60
@@ -20,4 +20,5 @@ start_service() {
 }
 
 stop_service() {
+        /bin/kill -s SIGTERM $(/bin/pidof cosmos)
 }
