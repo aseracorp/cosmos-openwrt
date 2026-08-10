@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       cosmos_version:
-        description: 'Cosmos version (latest, unstable or exact: v0.22.19)'
+        description: 'Cosmos version (latest, unstable or exact: v0.19.0-unstable4)'
         required: false
         type: string
         default: 'latest'
       owrt_version:
-        description: 'OpenWrt version (e.g., 25.12.4)'
+        description: 'OpenWrt version (e.g., 24.10.3)'
         required: false
         type: string
-        default: '25.12.4'
+        default: '25.12.5'
       target:
         description: 'Target architecture (e.g., bcm27xx-bcm2711)'
         required: true
@@ -27,7 +27,7 @@ on:
         description: 'Additional packages to include (space-separated)'
         required: false
         type: string
-        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep'
+        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep procps-ng-pkill coreutils-timeout'
       files:
         description: 'Folder with additional files (f.e. files/etc/uci-defaults)'
         required: false
@@ -47,7 +47,7 @@ on:
 env:
   SSH_KEY: ${{ secrets.SSH_KEY }}
   owrt_version: 'snapshots'
-  snapraid_version: '14.5'
+  snapraid_version: '14.9'
 
 jobs:
   build:

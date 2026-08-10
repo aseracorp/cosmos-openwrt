@@ -1,0 +1,52 @@
+#!/bin/bash
+# description: Fallback to static IP if dhcp-client does not get an IP after 30s
+# processname: /bin/staticFallback
+# Copyright aseracorp 2026
+
+loglevel="INFO"         #INFO is default, DEBUG for more infos
+nic="eth0"              #Device to listen to hotplug events (should be the physical nic, like eth0)
+bridge="br-lan"         #bridge-device that is used as lan-bridge, default is br-lan
+dhcp="lan"              #Interface with dhcp-client IP configuration
+static="lan11"          #Interface with static IP configuration
+delay=30                #how may seconds to wait for a dhcp-address before configuring the static IP
+
+log() {
+        [ "${loglevel}" == "DEBUG" ] && logger -t staticFallback "${1}"
+}
+
+while :; do
+
+#wait until network device is up
+(logread -f & ) | grep -q "Network device '${nic}' link is up"
+
+#only do something if config is as expected (dhcp-nic is dhcp-client and static-nic is static)
+if [ "$(uci get network.lan.proto)" == "dhcp" -a "$(uci get network.lan11.proto)" == "static" ]; then
+
+        #make sure of nic state ( set dhcp-client up and static down )
+        log "bring nics into default state (${dhcp} up and ${static} down)"
+        ifup "${dhcp}" && ifdown "${static}"
+
+        #check the local IP of the nic the script listens to
+        log "check the local IP of the nic the script listens to"
+        localIP="" && count=0
+        while [[ -z "${localIP}" && ${count} -le ${delay} ]]; do
+                localIP=$(ip -4 addr show "${bridge}" | grep -oP "(?<=inet ).*(?=/)")
+                sleep 1
+                ((count++))
+                log "#${count}: localIP is: ${localIP}"
+        done
+
+        #check if the Interface did not receive an IP
+        ( [ -n "${localIP}" ] && log "found dhcp-client IP: ${localIP}" ) || ( log "found no IP, start static nic" && ifdown "${dhcp}" && ifup "${static}" && service dnsmasq reload )
+        count=0
+        while [[ -z "${localIP}" && ${count} -le ${delay} ]]; do
+            localIP=$(ip -4 addr show "${bridge}" | grep -oP "(?<=inet ).*(?=/)")
+            sleep 1
+            ((count++))
+        done
+        logger -t staticFallback "staticFallback-routine completed, current LAN-IP is: ${localIP}"
+else
+        log "${dhcp} and ${static} are not setup as expected, do nothing"
+fi
+
+done

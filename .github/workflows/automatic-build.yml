@@ -9,10 +9,10 @@ on:
 
 env:
   SSH_KEY: ${{ secrets.SSH_KEY }}
-  owrt_version: '25.12.4'
-  snapraid_version: '14.5'
+  owrt_version: '25.12.5'
+  snapraid_version: '14.9'
   cosmos_version: 'latest'
-  packages: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep'
+  packages: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep procps-ng-pkill coreutils-timeout'
   files: 'files'
   rootfs_partsize: '896'
   storage: true
@@ -21,7 +21,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      
+
       - name: free up space on gh runner (otherwise it'll run out of space)
         uses: endersonmenezes/free-disk-space@v3
         with:
@@ -40,7 +40,7 @@ jobs:
       - name: install deps
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq musl-tools
+          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq musl-tools 
           version: 1.0
           
       - name: add env-vars & secrets
@@ -211,19 +211,19 @@ jobs:
             - name: build image RPI-4
               run: |
                 cd openwrt/imagebuilder-bcm27xx-bcm2711
-                make image PROFILE=rpi-4 PACKAGES="${{ env.packages }}" FILES="${{ env.files }}" ROOTFS_PARTSIZE="${{ env.rootfs_partsize }}"
+                make image PROFILE=rpi-4 PACKAGES="${{ env.packages }}" FILES="${{ env.files }}" ROOTFS_PARTSIZE="${{ env.rootfs_partsize }}" EXTRA_IMAGE_NAME="CosmosCloud-${{ env.cosmos_version }}"
 
             - name: build image AMD64
               run: |
                 cd openwrt/imagebuilder-x86-64
-                make image PROFILE=generic PACKAGES="${{ env.packages }}" FILES="${{ env.files }}" ROOTFS_PARTSIZE="${{ env.rootfs_partsize }}"
+                make image PROFILE=generic PACKAGES="${{ env.packages }}" FILES="${{ env.files }}" ROOTFS_PARTSIZE="${{ env.rootfs_partsize }}" EXTRA_IMAGE_NAME="CosmosCloud-${{ env.cosmos_version }}" DISABLED_SERVICES="knxWatchdog"
 
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1      
         with:
           artifacts: "openwrt/imagebuilder-bcm27xx-bcm2711/bin/targets/bcm27xx/bcm2711/*squashfs*.img.gz, openwrt/imagebuilder-x86-64/bin/targets/x86/64/*squashfs*.img.gz"
-          tag: v${{ env.cosmos_version }}-${{ env.owrt_version }}
-          name: Cosmos ${{ env.cosmos_version }} OpenWrt ${{ env.owrt_version }}
+          tag: cc${{ env.cosmos_version }}-owv${{ env.owrt_version }}
+          name: Cosmos Cloud ${{ env.cosmos_version }} OpenWrt ${{ env.owrt_version }}
           allowUpdates: true
 
       - name: cleanup before caching
