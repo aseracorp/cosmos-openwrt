@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       cosmos_version:
-        description: 'Cosmos version (latest, unstable or exact: v0.22.19)'
+        description: 'Cosmos version (latest, unstable or exact: v0.19.0-unstable4)'
         required: false
         type: string
         default: 'latest'
       owrt_version:
-        description: 'OpenWrt version (e.g., 25.12.4)'
+        description: 'OpenWrt version (e.g., 24.10.3)'
         required: false
         type: string
-        default: '25.12.4'
+        default: '25.12.5'
       target:
         description: 'Target architecture (e.g., bcm27xx-bcm2711)'
         required: true
@@ -27,7 +27,7 @@ on:
         description: 'Additional packages to include (space-separated)'
         required: false
         type: string
-        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep'
+        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep coreutils-timeout ethtool'
       files:
         description: 'Folder with additional files (f.e. files/etc/uci-defaults)'
         required: false
@@ -47,14 +47,14 @@ on:
 env:
   SSH_KEY: ${{ secrets.SSH_KEY }}
   owrt_version: 'snapshots'
-  snapraid_version: '14.5'
+  snapraid_version: '14.9'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - if: ${{ github.event.inputs.owrt_version != '' }}
         run: echo "owrt_version=${{ github.event.inputs.owrt_version }}" >> "$GITHUB_ENV"
@@ -67,21 +67,12 @@ jobs:
           replace-with: '/'
 
       - name: install deps
-        uses: awalsh128/cache-apt-pkgs-action@latest
+        uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq musl-tools
           version: 1.0
 
-      - name: cache OpenWrt Imagebuilder
-        if: ${{ env.owrt_version  != 'snapshots' }}
-        id: cache-imagebuilder
-        uses: actions/cache@v4
-        with:
-          path: openwrt/openwrt-imagebuilder/
-          key: ${{ runner.os }}-imagebuilder-${{ env.owrt_version }}-${{ github.event.inputs.target }}
-
       - name: Download OpenWrt Imagebuilder
-        if: steps.cache-imagebuilder.outputs.cache-hit != 'true'
         run: |
           mkdir openwrt && cd openwrt
           if [ "${{ env.owrt_version }}" = "snapshots" ]; then
@@ -110,7 +101,7 @@ jobs:
 
       - name: cache Cosmos Cloud
         id: cache-cosmosCloud
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.event.inputs.files }}/opt/cosmos/
           key: ${{ runner.os }}-${{ github.event.inputs.target }}-cosmosCloud-${{ env.cosmos_version }}
@@ -148,7 +139,7 @@ jobs:
 
       - name: cache Snapraid
         id: cache-snapraid
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.event.inputs.files }}/sbin/snapraid
           key: ${{ runner.os }}-${{ github.event.inputs.target }}-snapraid-${{ env.snapraid_version }}
@@ -188,78 +179,64 @@ jobs:
 
       - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target != 'x86-64' }}
         name: Upload factory image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory.img.gz
           retention-days: 7
-          compression-level: 0 # no compression
+          archive: false
 
       - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target != 'x86-64' }}
         name: Upload sysupgrade image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
           retention-days: 7
-          compression-level: 0 # no compression
+          archive: false
 
       - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target != 'x86-64' }}
         name: Upload factory image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory.img.gz
           retention-days: 7
-          compression-level: 0 # no compression
+          archive: false
 
       - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target != 'x86-64' }}
         name: Upload sysupgrade image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
           retention-days: 7
-          compression-level: 0 # no compression
+          archive: false
 
       - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target == 'x86-64' }}
         name: Upload efi image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi.img.gz
           retention-days: 7
-          compression-level: 0 # no compression
+          archive: false
 
       - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target == 'x86-64' }}
         name: Upload bios image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined.img.gz
           retention-days: 7
-          compression-level: 0 # no compression
+          archive: false
 
       - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target == 'x86-64' }}
         name: Upload efi image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi.img.gz
           retention-days: 7
-          compression-level: 0 # no compression
+          archive: false
 
       - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target == 'x86-64' }}
         name: Upload bios image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined
           path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined.img.gz
           retention-days: 7
-          compression-level: 0 # no compression
-
-      - name: cleanup before caching
-        working-directory: openwrt/openwrt-imagebuilder
-        run: |
-          rm -R ${{ github.event.inputs.files }}/
-          rm -R bin/
+          archive: false

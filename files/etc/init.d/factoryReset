@@ -1,7 +1,8 @@
 #!/bin/sh /etc/rc.common
+# if this scripts finds a file called reset in /boot, it factory resets / deletes all data
 # Copyright aseracorp 2025
 
-START=97
+START=98
 STOP=03
 
 start() {

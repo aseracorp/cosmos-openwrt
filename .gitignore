@@ -1,0 +1,7 @@
+files/bin/serial
+files/bin/hooc
+files/bin/knxWatchdog
+files/bin/lighthouseCheck
+files/etc/init.d/hooc
+files/etc/init.d/knxWatchdog
+files/etc/init.d/lighthouseCheck
