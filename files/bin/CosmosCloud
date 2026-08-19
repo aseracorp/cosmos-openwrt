@@ -67,6 +67,10 @@ init() {
                 echo "$(date +"%F_%H%M%S") var/lib/docker: create symlink to fix wrong docker links..." >> /tmp/init.log
         done
 
+        #make sure dnsmasq is not blocking port 53 for constellation
+        [ -n "$(uci get dhcp.@dnsmasq[0].notinterface 2>/dev/null | grep -o 'constellation')" ] || ( uci add_list dhcp.@dnsmasq[0].notinterface='constellation' && uci commit dhcp && service dnsmasq reload )
+        [ -z "$(uci get dhcp.@dnsmasq[0].interface 2>/dev/null | grep -o 'constellation')" ] ||  ( uci del_list dhcp.@dnsmasq[0].notinterface='constellation' && uci commit dhcp && service dnsmasq reload )
+
         #inital commissioning
         if [[ $(cat init.conf | cut -c 0-25) != "commissioned successfully" ]]; then
                 echo "$(date +"%F_%H%M%S") start init..." >> init.log
@@ -149,7 +153,7 @@ init() {
                 if [[ $(ip a | grep eth1:) ]]; then
                         uci set network.wan=interface
                         uci set network.wan.proto='dhcp'
-                        uci set network.wan.device='eth1'
+                        [ "$(uci get "$(uci show network | grep -oP "network\.@device\[[0-9]\]\.(?=name='$(uci get network.lan.device)')")ports")" == "eth1" ] && uci set network.wan.device='eth0' || uci set network.wan.device='eth1'
                         uci set network.wan.multipath='off'
                         uci commit network && service network reload
                 fi
@@ -222,6 +226,10 @@ init() {
                         sysupgrade -r "/boot/${BACKUP}"
                 fi
 
+                #start cosmos
+                cd /opt/cosmos
+                ./start.sh &
+
                 # pull mongodb image
                 if ping -i 5 -c 5 -A hub.docker.com; then
                         count=1
@@ -237,8 +245,8 @@ init() {
                         fi
                 fi
 
-                #do not execute init further and start cosmos
-                return
+                echo "$(date +"%F_%H%M%S") last reboot to have a clean state..." >> init.log
+                reboot && exit 0
         
         fi
 

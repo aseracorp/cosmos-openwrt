@@ -90,7 +90,7 @@ fi
 if [[ $(ip a | grep eth1:) ]]; then
   uci set network.wan=interface
   uci set network.wan.proto='dhcp'
-  uci set network.wan.device='eth1'
+  [ "$(uci get "$(uci show network | grep -oP "network\.@device\[[0-9]\]\.(?=name='$(uci get network.lan.device)')")ports")" == "eth1" ] && uci set network.wan.device='eth0' || uci set network.wan.device='eth1'
   uci set network.wan.multipath='off'
   uci commit network && service network reload
 fi
@@ -181,10 +181,9 @@ if [ -n "$cosmos" ]; then
   uci set firewall.@forwarding[-1].dest='wan'
 
   # limit DNS-Server to localhost and local network (frees up port 53 for constellation on nebula interface)
-  uci add_list dhcp.@dnsmasq[0].interface="loopback"
-  uci add_list dhcp.@dnsmasq[0].interface="lan"
-  uci add_list dhcp.@dnsmasq[0].interface="lan11"
-  uci add_list dhcp.@dnsmasq[0].interface="docker"
+  uci add_list dhcp.@dnsmasq[0].notinterface='constellation'
+  uci del dhcp.@dnsmasq[0].interface
+  uci show network | grep -oP '(?<=network.).*(?==interface)' | grep --invert-match 'constellation|wan|wwan|tailscale|nebula' | xargs -r -I % sh -c "uci add_list dhcp.@dnsmasq[0].interface='%'"
 
   # overwrite dns-server for remote access (test-nodes only)
   uci add_list dhcp.@dnsmasq[0].address='/dev.samable.net/1.1.1.1'
