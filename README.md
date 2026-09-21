@@ -39,7 +39,7 @@ On Debian, you can create an ssh-key with `ssh-keygen -t ed25519`
 
 Per Default, OpenWrt is configured as a DHCP-Client with static failover 192.168.0.11. mdns is enabled. If there is no existing DHCP-Server, Cosmos will serve DHCP-Addresses per default (Non Authorative, so any other DHCP-Server can take over at anytime).
 
-Per default, Luci is accessible via Port 8080 until you set up Cosmos. When Cosmos Initial setup is Done, Luci (OpenWrt Webinterface) is no longer exposed directly and integrated into cosmos (after setup).
+Per default, Luci (HTTPS) is accessible via Port 4443, while Port 8080 redirects to it, until you set up Cosmos. When Cosmos Initial setup is Done, the direct HTTP/HTTPS ports are closed down: LuCI only listens on 127.0.0.1:8080 and the Cosmos Proxy serves it on Port 4443 (proxying 4443 -> 8080). LuCI (OpenWrt Webinterface) is then integrated into cosmos (after setup).
 
 If you want to use a static IP for cosmos and you want to change this static IP, you need to Allow insecure access via local IP. Follow this guide:
 

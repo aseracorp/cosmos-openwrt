@@ -4,6 +4,9 @@ trap 'exec 2>&4 1>&3' 0 1 2 3
 exec 1> >(logger -s -t $(basename $0)) 2>&1
 # Everything below will go to logread:
 
+# Unified logging onto OpenWrt syslog (logread).
+log() { logger -t CosmosCloud "$@"; }
+
 init() {
         exec 1>init.plain.log 2>&1
         # Everything below will go to the file 'init.plain.log':
@@ -11,73 +14,76 @@ init() {
         # should the docker volumes be copy on write? This enables compression but accelerates writes onto disk which is harmful for the disk with f.e. database-files. You then need to disable it manually (for databases) on a subfolder basis with 'chattr +C <path-to-subfolder>'. !! Only applies to new files created !!
         # cow=true
 
-        source .env
-        if [ -f /boot/.env  ]; then source /boot/.env; fi
+        # env from the persistent cosmos dir, then any boot-partition override
+        cd /etc/cosmos || exit 1
+        [ -f ./.env ] && source ./.env
+        [ -f /boot/.env ] && source /boot/.env
         touch init.conf
         touch /tmp/cosmos.log
         touch /tmp/cosmos.plain.log
 
         readdisk () {
-        #read-out disk infos
-        root_partition=$(basename $(readlink -f /sys/dev/block/"$(awk -e '$9=="/dev/root"{print $3}' /proc/self/mountinfo)"))
-        disk=$(echo $(lsblk --list --noheadings --paths --output PKNAME /dev/${root_partition}) | sed "s@/dev/@@")
-        if [[ "$disk" =~ sd[a-z] ]]; then
-                new_part_id=$( echo $(( $(echo $root_partition | sed "s@${disk}@@") + 1 )) )
+        #read-out disk infos (sets globals root_partition, disk, new_part_id, new_part)
+        local dev
+        root_partition=$(basename "$(readlink -f "/sys/dev/block/$(awk -e '$9=="/dev/root"{print $3}' /proc/self/mountinfo)")")
+        disk=$(lsblk --list --noheadings --paths --output PKNAME "/dev/${root_partition}" | sed "s@/dev/@@")
+        if [[ "${disk}" =~ ^sd[a-z] ]]; then
+                (( new_part_id = ${root_partition//${disk}/} + 1 ))
                 new_part="${disk}${new_part_id}"
         else
-                new_part_id=$( echo $(( $(echo $root_partition | sed "s@${disk}p@@") + 1 )) )
+                (( new_part_id = ${root_partition//${disk}p/} + 1 ))
                 new_part="${disk}p${new_part_id}"
         fi
         }
-
-        #flash image to eMMC
-        if [ -n "${EMMC}" ]; then
-        readdisk
-        if [ $disk != "mmcblk0" ]; then
-                echo "$(date +"%F_%H%M%S") Found EMMC-key, writing image to eMMC..." >> init.log
-                wget $EMMC -O emmc/firmware.img.gz
-                gunzip -c emmc/firmware.img.gz | dd of=/dev/mmcblk0 bs=4M conv=fsync
-                echo "$(date +"%F_%H%M%S") written successfully, power down..." >> init.log
-                poweroff && exit 0
-        else
-                echo "$(date +"%F_%H%M%S") root disk is mmcblk0, I won't flash onto myself, abort..." >> init.log
-        fi
-        fi
 
         #add symlink for config
         while [ ! -L /var/lib/cosmos ]; do
                 while [ -d /var/lib/cosmos ]; do rm -R /var/lib/cosmos && sleep 1; done
                 ln -s /etc/cosmos/ /var/lib/cosmos
-                echo "$(date +"%F_%H%M%S") var/lib/cosmos: create symlink to persist storage..." >> /tmp/init.log
+                log "var/lib/cosmos: create symlink to persist storage..."
                 sleep 1
         done
         if [ ! -L cosmos.log  ]; then
         if [ -f cosmos.log  ]; then rm cosmos.log; fi
                 ln -s /tmp/cosmos.log /etc/cosmos/cosmos.log
-                echo "$(date +"%F_%H%M%S") cosmos.log: create symlink to tmp..." >> /tmp/init.log
+                log "cosmos.log: create symlink to tmp..."
         fi
         if [ ! -L cosmos.plain.log  ]; then
         if [ -f cosmos.plain.log  ]; then rm cosmos.plain.log; fi
                 ln -s /tmp/cosmos.plain.log /etc/cosmos/cosmos.plain.log
-                echo "$(date +"%F_%H%M%S") cosmos.plain.log: create symlink to tmp..." >> /tmp/init.log
+                log "cosmos.plain.log: create symlink to tmp..."
         fi
-        while [ ! -L /var/lib/docker ]; do
+        docker_tries=0
+        while [ ! -L /var/lib/docker ] && [ "${docker_tries}" -lt 10 ]; do
                 [ -d /var/lib/docker ] && rmdir /var/lib/docker
                 ln -s /opt/docker/ /var/lib/docker
-                echo "$(date +"%F_%H%M%S") var/lib/docker: create symlink to fix wrong docker links..." >> /tmp/init.log
+                log "var/lib/docker: create symlink to fix wrong docker links..."
+                ((docker_tries++))
         done
+
+        #only with btrfs storage: ensure the cosmos storage dir exists and add a
+        #stable symlink to it (do nothing when STORAGE is false)
+        if [ "$STORAGE" = true ]; then
+                mkdir -p /opt/docker/cosmos
+                if [ ! -L /cosmos-storage ]; then
+                        [ -d /cosmos-storage ] && rmdir /cosmos-storage
+                        ln -s /opt/docker/cosmos /cosmos-storage
+                        log "cosmos-storage: create symlink to /opt/docker/cosmos..."
+                fi
+        fi
 
         #make sure dnsmasq is not blocking port 53 for constellation
         [ -n "$(uci get dhcp.@dnsmasq[0].notinterface 2>/dev/null | grep -o 'constellation')" ] || ( uci add_list dhcp.@dnsmasq[0].notinterface='constellation' && uci commit dhcp && service dnsmasq reload )
-        [ -z "$(uci get dhcp.@dnsmasq[0].interface 2>/dev/null | grep -o 'constellation')" ] ||  ( uci del_list dhcp.@dnsmasq[0].notinterface='constellation' && uci commit dhcp && service dnsmasq reload )
+        [ -n "$(uci get dhcp.@dnsmasq[0].interface 2>/dev/null)" ] || ( uci show network | grep -oP '(?<=network.).*(?==interface)' | grep -v -P 'constellation|wan|wwan|tailscale|nebula' | xargs -r -I % sh -c "uci add_list dhcp.@dnsmasq[0].interface='%'" && uci commit dhcp && service dnsmasq reload )
+        [ -z "$(uci get dhcp.@dnsmasq[0].interface 2>/dev/null | grep -o 'constellation')" ] || ( uci del_list dhcp.@dnsmasq[0].interface='constellation' && uci commit dhcp && service dnsmasq reload )
 
         #inital commissioning
         if [[ $(cat init.conf | cut -c 0-25) != "commissioned successfully" ]]; then
-                echo "$(date +"%F_%H%M%S") start init..." >> init.log
+                log "start init..."
 
                 if [ -f config.txt ]; then
                         cat config.txt > /boot/config.txt && rm config.txt
-                        echo "$(date +"%F_%H%M%S") update config.txt..." >> init.log
+                        log "update config.txt..."
                 fi
 
                 #mount eMMC (btrfs) filesystem (used for cosmos)
@@ -87,7 +93,7 @@ init() {
                         start_sector=$(( $(cat /sys/block/${disk}/${root_partition}/start) + $(cat /sys/block/${disk}/${root_partition}/size) ))
 
                         if [ ! -e /dev/"${new_part}" ]; then
-                        echo "$(date +"%F_%H%M%S") add 3rd partition (btrfs) on empty space (start-sector: ${start_sector})..." >> init.log
+                        log "add 3rd partition (btrfs) on empty space (start-sector: ${start_sector})..."
                         # add & format storage partition (use all empty space after root partition)
                         echo "n
                         p
@@ -95,7 +101,7 @@ init() {
                         ${start_sector}
 
                         w" | fdisk -W always /dev/"${disk}"
-                        echo "$(date +"%F_%H%M%S") format 3rd partition (btrfs)..." >> init.log
+                        log "format 3rd partition (btrfs)..."
                         sleep 1
                         partx -u /dev/"${disk}"
                         mkfs.btrfs /dev/"${new_part}"
@@ -108,7 +114,7 @@ init() {
                         # clear docker dir
                         sleep 1 && rm -R /opt/docker/*
                         # mount btrfs partition to docker dir
-                        echo "$(date +"%F_%H%M%S") mount 3rd partition (btrfs)..." >> init.log
+                        log "mount 3rd partition (btrfs)..."
                         block detect | uci import fstab
                         #get new part id
                         new_part_id=$(uci show fstab | grep "/mnt/${new_part}" | cut -c 14-14)
@@ -117,7 +123,7 @@ init() {
                         uci set fstab.@mount[${new_part_id}].options='compress=zstd:10'
                         uci commit fstab
                         #set btrfs dockerd storage driver
-                        echo "$(date +"%F_%H%M%S") switch docker storage driver to btrfs..." >> init.log
+                        log "switch docker storage driver to btrfs..."
                         partx -u /dev/"${disk}"
                         uci set dockerd.globals.storage_driver="btrfs"
                         uci commit dockerd
@@ -125,27 +131,27 @@ init() {
                         fi
                         if [[ $(findmnt /opt/docker/ -no SOURCE) = "/dev/${new_part}" ]]; then
                         if [ -z ${cow+x} ]; then
-                                echo "$(date +"%F_%H%M%S") disable copy on write on docker volumes..." >> init.log
+                                log "disable copy on write on docker volumes..."
                                 mkdir -p /opt/docker/volumes
                                 chattr +C /opt/docker/volumes
-                        elif [ $cow = 1 ]; then
-                                echo "$(date +"%F_%H%M%S") enable copy on write on docker volumes... (! Danger)" >> init.log
+                        elif [ "${cow}" = "1" ]; then
+                                log "enable copy on write on docker volumes... (! Danger)"
                                 mkdir -p /opt/docker/volumes
                                 chattr -C /opt/docker/volumes
                         fi
-                        echo "$(date +"%F_%H%M%S") partition successfully mounted, store state as commissioned in init.conf. Delete the file to check partition-setup again" >> init.log
+                        log "partition successfully mounted, store state as commissioned in init.conf. Delete the file to check partition-setup again"
                         echo "commissioned successfully with btrfs-storage" > init.conf
                         else
-                        echo "$(date +"%F_%H%M%S") failed to mount, reboot now and try again..." >> init.log
+                        log "failed to mount, reboot now and try again..."
                         reboot && exit 0 #reboot, because all other commands like partx -u... weren't reliable
                         fi
                 else
-                        echo "$(date +"%F_%H%M%S") init finished without btrfs-storage" >> init.log
+                        log "init finished without btrfs-storage"
                         echo "commissioned successfully without btrfs-storage" > init.conf
                 fi
 
                 #enable mdns with reflector
-                echo "$(date +"%F_%H%M%S") enable mdns with reflector..." >> init.log
+                log "enable mdns with reflector..."
                 sed -i 's/enable-reflector=no/enable-reflector=yes/g' /etc/avahi/avahi-daemon.conf
                 service avahi-daemon restart
 
@@ -160,7 +166,7 @@ init() {
 
                 #add LTE-interface
                 if [ -e /dev/cdc-wdm0 ]; then
-                        echo "$(date +"%F_%H%M%S") found LTE-module, setup wwan interface..." >> init.log
+                        log "found LTE-module, setup wwan interface..."
                         uci set network.wwan=interface
                         uci set network.wwan.proto='qmi'
                         uci set network.wwan.device='/dev/cdc-wdm0'
@@ -201,22 +207,22 @@ init() {
                         uci commit mwan3
                         uci commit firewall
                 else
-                        echo "$(date +"%F_%H%M%S") no LTE-module found, continue..." >> init.log
+                        log "no LTE-module found, continue..."
                 fi
 
                 #switch root terminal to bash
                 if [ ! $(cat /etc/passwd | grep root:/bin/bash) ]; then
                         sed -i -e 's@root:/bin/ash@root:/bin/bash@g' /etc/passwd
-                        echo "$(date +"%F_%H%M%S") switch root terminal to bash..." >> init.log
+                        log "switch root terminal to bash..."
                 fi
                 #add cosmos user (for terminal in cosmos)
                 if [ ! $(cat /etc/passwd | grep cosmos) ]; then
                         echo "cosmos:x:1000:1000:cosmos:/opt/cosmos:/bin/bash" >> /etc/passwd
-                        echo "$(date +"%F_%H%M%S") add cosmos user..." >> init.log
+                        log "add cosmos user..."
                 fi
                 if [ ! $(cat /etc/sudoers | grep cosmos) ]; then
                         echo "cosmos ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-                        echo "$(date +"%F_%H%M%S") add cosmos to pw-less root..." >> init.log
+                        log "add cosmos to pw-less root..."
                 fi
 
                 #if there is a backup-file in boot partition, restore backup
@@ -229,23 +235,10 @@ init() {
                 #start cosmos
                 cd /opt/cosmos
                 ./start.sh &
-
-                # pull mongodb image
-                if ping -i 5 -c 5 -A hub.docker.com; then
-                        count=1
-                        while [[ ! $(docker ps) && count -le 19 ]]; do
-                        sleep 1
-                        ((count++))
-                        done
-                        if [[ $(docker ps) ]]; then
-                        echo "$(date +"%F_%H%M%S") dockerd & network up, pull mongodb..." >> init.log
-                        docker pull arm64v8/mongo:4.4.18
-                        else
-                        echo "$(date +"%F_%H%M%S") docker still not ready, give up an continue without mongodb pulled..." >> init.log
-                        fi
-                fi
-
-                echo "$(date +"%F_%H%M%S") last reboot to have a clean state..." >> init.log
+                #wait for cosmos to be ready and then continue, timeout after 60s
+                timeout 60 bash -c "tail -n 10 -F /etc/cosmos/cosmos.log | grep -s -m 1 -o 'Listening to HTTP'"
+                
+                log "last reboot to have a clean state..."
                 reboot && exit 0
         
         fi
@@ -255,36 +248,29 @@ init() {
         #on change of hostname, do this:
         if [[ "${hostname}" != "null" && "${hostname}" != "${HOSTNAME}" ]]; then
 
-                #add licence from file (if file exists)
-                if [ -n "${LICENCE}" ]; then
-                        echo "$(date +"%F_%H%M%S") found licence, add Licence and stable market to config..." >> init.log
-                        Licence=${LICENCE} yq -i '.Licence = env(Licence)' /etc/cosmos/cosmos.config.json
-                elif [ -f "/boot/licence" ]; then
-                        echo "$(date +"%F_%H%M%S") found licence, add Licence and stable market to config..." >> init.log
-                        Licence=$(cat /boot/licence) yq -i '.Licence = env(Licence)' /etc/cosmos/cosmos.config.json
-                fi
-
-                #setup luci behind cosmos
-                if [ "${HOSTNAME}" == "0.0.0.0" ]; then
-                        echo "$(date +"%F_%H%M%S") disable luci login..." >> init.log
+                #setup luci behind cosmos (only if cosmos setup is complete)
+                if [ "${HOSTNAME}" == "0.0.0.0" ] && [ "$(yq '.NewInstall' /etc/cosmos/cosmos.config.json -o x)" == "false" ]; then
+                        log "disable luci login..."
 
                         #set root password
                         (echo "${PASSWD}"; sleep 1; echo "${PASSWD}") | passwd > /dev/null
 
-                        #block direct luci access after successfull cosmos setup
+                        #block direct access, uhttpd only serves localhost:8080 for the cosmos proxy
                         uci del uhttpd.main.listen_http
-                        uci add_list uhttpd.main.listen_http='127.0.0.1:8080'
                         uci del uhttpd.main.listen_https
+                        uci add_list uhttpd.main.listen_http='127.0.0.1:8080'
+                        uci del uhttpd.main.redirect_https
                         uci commit uhttpd
                         service uhttpd restart
 
-                        #disable luci login
-                        sed -i "s/let user = http.getenv('HTTP_AUTH_USER');/let user = 'root';/g" /usr/share/ucode/luci/dispatcher.uc
-                        sed -i "s/let pass = http.getenv('HTTP_AUTH_PASS')/let pass = '${PASSWD}'/g" /usr/share/ucode/luci/dispatcher.uc
-                        sed -i "s@http.redirect(url);@http.redirect('https://${hostname}/cosmos-ui/');@g" /usr/share/ucode/luci/controller/admin/index.uc
+                        #disable luci login (idempotent helper, works for every theme incl. footstrap)
+                        /bin/disable-luci-login "${PASSWD}" "https://${hostname}/cosmos-ui/"
+                        #soft-restart ucode/luci (dispatcher.uc is ucode; no service restart needed,
+                        #but a fresh request picks the change up)
                 else
-                        echo "$(date +"%F_%H%M%S") update logout-URL..." >> init.log
-                        sed -i "s@http.redirect('https://${HOSTNAME}/cosmos-ui/');@http.redirect('https://${hostname}/cosmos-ui/');@g" /usr/share/ucode/luci/controller/admin/index.uc
+                        log "update logout-URL..."
+                        #re-invoke idempotent helper so the logout URL follows the new hostname
+                        /bin/disable-luci-login "${PASSWD}" "https://${hostname}/cosmos-ui/"
                 fi
 
                 localIp=$(ip -4 addr show "$(uci get network.lan.device)" | grep -oP "(?<=inet ).*(?=/)")
@@ -319,7 +305,7 @@ init() {
                 sed -i -r "s@(LOCALIP=).*@\1${localIp}@g" ./.env
 
                 #add OpenWRT GUI as App
-                echo "$(date +"%F_%H%M%S") add OpenWRT to GUI as App..." >> init.log
+                log "add OpenWRT to GUI as App..."
                 if [[ "${hostname}" == *".local" ]]; then
                         owrt_hostname="openwrt.local"
                 elif [[ "${hostname}" =~ ^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; then
@@ -375,11 +361,11 @@ init() {
 
 }
 
-#startup
+#set LED's to normal mode, startup
 cd /etc/cosmos
 init
 
-#start cosmos, normal operation
+#start cosmos & set LED's to normal mode, normal operation
 exec 1> >(logger -s -t $(basename $0)) 2>&1
 cd /opt/cosmos
 ./start.sh

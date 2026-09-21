@@ -1,0 +1,65 @@
+#!/bin/bash
+# disable-luci-login  <root-password>  <cosmos-redirect-url>
+#
+# Idempotent, version-tolerant replacement for the fragile 3x `sed` hack that puts
+# LuCI (all themes, incl. luci-theme-footstrap) into auto-login behind the Cosmos
+# reverse-proxy auth.
+#
+# Why a helper instead of three inline `sed` - the old lines braid on the EXACT
+# upstream dispatcher spelling. LuCI refactors those functions between releases, so
+# a `sed` whose pattern no longer matches fails SILENTLY and the LuCI login comes
+# back. This version
+#   - anchors on the `http.getenv('HTTP_AUTH_*')` RHS (the thing the hack disables)
+#     rather than the whole statement, so a future rename around it still matches,
+#   - re-runs cleanly (idempotent) and never double-corrupts,
+#   - verifies each change and logs, failing loudly instead of silently.
+#
+# Args (positional, or env PASSWD for the password if preferred):
+#   1  root password written into dispatcher.uc   (shell-safe)
+#   2  redirect URL for logout, e.g. https://router/cosmos-ui/
+#
+# Files touched (theme-INDEPENDENT, part of luci-base):
+#   /usr/share/ucode/luci/dispatcher.uc             -> auto-login
+#   /usr/share/ucode/luci/controller/admin/index.uc -> logout lands on Cosmos
+set -u
+
+DISP=/usr/share/ucode/luci/dispatcher.uc
+IDX=/usr/share/ucode/luci/controller/admin/index.uc
+ok=1
+
+PASS="${1:-${PASSWD:-}}"
+REDIRECT="${2:-}"
+
+[ -n "$REDIRECT" ] || { echo "disable-luci-login: ERROR no redirect URL given"; REDIRECT=""; ok=0; }
+
+echo "disable-luci-login: hardening LuCI auto-login (user/pass + logout url)"
+
+# --- dispatcher.uc: force auto-login as root, bypass the (proxy-less) login form
+# Only touch the line whose RHS is the two HTTP auth lookups; leave every other
+# `let user =` / `let pass =` elsewhere in the file alone.
+if [ -w "$DISP" ]; then
+  sed -i \
+    -e "/http\.getenv('HTTP_AUTH_USER')/c\let user = 'root';" \
+    -e "/http\.getenv('HTTP_AUTH_PASS')/c\let pass = '${PASS}';" \
+    "$DISP"
+  echo "disable-luci-login: dispatcher.uc  -> user/pass hardcoded"
+else
+  echo "disable-luci-login: ERROR: cannot write $DISP" >&2 ; ok=0
+fi
+
+# --- controller/admin/index.uc: logout stays inside Cosmos ---------------------
+if [ -n "$REDIRECT" ] && [ -w "$IDX" ]; then
+  sed -i -e "/^[[:space:]]*http\.redirect(/c\http.redirect('${REDIRECT}');" "$IDX"
+  echo "disable-luci-login: index.uc logout url -> ${REDIRECT}"
+else
+  echo "disable-luci-login: ERROR: cannot write $IDX" >&2 ; ok=0
+fi
+
+# --- verify ------------------------------------------------------------------
+echo "disable-luci-login: current dispatcher lines:"
+grep -nE "let user =|let pass =" "$DISP" 2>/dev/null | sed 's/^/    /'
+echo "disable-luci-login: current index.uc redirect:"
+grep -nE "http\.redirect" "$IDX" 2>/dev/null | sed 's/^/    /'
+
+[ "$ok" = 1 ] && echo "disable-luci-login: DONE" || { echo "disable-luci-login: FAILED" >&2; exit 1; }
+exit 0

@@ -14,20 +14,25 @@ cosmos=1
 
 #################
 
-# log potential errors
-exec >/tmp/99-cosmos-default.log 2>&1
+# capture command errors for later inspection (status logging goes to syslog)
+exec 2>/tmp/99-cosmos-default.log
+
+# unified logging onto OpenWrt syslog (readable with: logread -e cosmos-default)
+log() { logger -t cosmos-default "$@"; }
 
 #import env vars (& clear var HOSTNAME)
 [ -f "/etc/cosmos/.env" ] && HOSTNAME="" && source /etc/cosmos/.env
 [ -f "/boot/.env" ] && source /boot/.env
 
+# enable Footstrap as the default LuCI theme (packaged via the owfeed apk feed)
+uci set luci.main.mediaurlbase='/luci-static/footstrap'
+uci commit luci
+
 #exit if already commissioned
 if [ "$(yq '.NewInstall' /etc/cosmos/cosmos.config.json)" == false ]; then
-  echo "already commissioned, only setup luci"
-  #disable direct luci login
-  sed -i "s/let user = http.getenv('HTTP_AUTH_USER');/let user = 'root';/g" /usr/share/ucode/luci/dispatcher.uc
-  sed -i "s/let pass = http.getenv('HTTP_AUTH_PASS')/let pass = '${PASSWD}'/g" /usr/share/ucode/luci/dispatcher.uc
-  sed -i "s@http.redirect(url);@http.redirect('https://${HOSTNAME}/cosmos-ui/');@g" /usr/share/ucode/luci/controller/admin/index.uc
+  log "already commissioned, only setup luci"
+  #disable direct luci login (idempotent helper, works for every theme incl. footstrap)
+  [ -n "${PASSWD:-}" ] && /bin/disable-luci-login "${PASSWD}" "https://${HOSTNAME}/cosmos-ui/"
   exit 0
 elif [ "$(cat /etc/cosmos/init.conf | cut -c 0-25)" == "commissioned successfully" ]; then
   exit 0
@@ -56,11 +61,11 @@ uci commit dropbear
 # Configure LAN
 # More options: https://openwrt.org/docs/guide-user/base-system/basic-networking
 if [ -n "$lan_ip_address" ]; then
-  echo "set static IP $lan_ip_address"
+  log "set static IP $lan_ip_address"
   uci set network.lan.ipaddr='$lan_ip_address'
   uci commit network && service network reload  
 else
-  echo "set IP to dhcp-client"
+  log "set IP to dhcp-client"
   uci set network.lan.proto='dhcp'
   uci set network.lan11=interface
   uci set network.lan11.auto='0'
@@ -98,7 +103,7 @@ fi
 # Configure WLAN
 # More options: https://openwrt.org/docs/guide-user/network/wifi/basic#wi-fi_interfaces
 if [ -n "$wlan_name" -a -n "$wlan_password" -a ${#wlan_password} -ge 8 ]; then
-  echo "set Wifi-Settings"
+  log "set Wifi-Settings"
   uci set wireless.@wifi-device[0].disabled='0'
   uci set wireless.@wifi-device[0].htmode='HT40'
   uci set wireless.@wifi-device[0].band='2g'
@@ -121,7 +126,6 @@ fi
 
 # setup cosmos
 if [ -n "$cosmos" ]; then
-  echo "$(date +"%F_%H%M%S") setup OpenWrt for cosmos..." >> /etc/cosmos/init-script.log
 
   # add cosmos configuration and backups to sys-backups and preserve in sysupgrades
   [ $(cat /etc/sysupgrade.conf | grep '/etc/cosmos') ] && echo "/etc/cosmos" >> /etc/sysupgrade.conf
@@ -132,26 +136,30 @@ if [ -n "$cosmos" ]; then
   uci set system.@system[0].hostname="cosmos-cloud-$(ifconfig -a | grep -m 1 'eth0' | tail -c 8 | head -c 5 | tr -d : )"
   uci set system.@system[0].zonename='Europe/Zurich'
   uci set system.@system[0].timezone='CET-1CEST,M3.5.0,M10.5.0/3'
+  # set zram compression algorithm to lz4 (requires kmod-lib-lz4)
+  uci set system.cfg01e48a.zram_comp_algo='lz4'
   uci commit system
 
   #store hostname in env-var
   [ -z "${HOSTNAME}" ] && echo "HOSTNAME=0.0.0.0" >> /etc/cosmos/.env
   [ -z "${LOCALIP}" ] && echo "LOCALIP=$(ip -4 addr show "$(uci get network.lan.device)" | grep -oP "(?<=inet ).*(?=/)")" >> /etc/cosmos/.env
 
-  #switch luci to free ports
-  echo "setup luci to free ports"
+  #switch luci to free ports: HTTPS on 0.0.0.0:4443, HTTP 0.0.0.0:8080 redirects -> 4443
+  log "setup luci on https  4443 with 8080->4443 redirect"
   uci del uhttpd.main.listen_http
-  uci add_list uhttpd.main.listen_http='0.0.0.0:8080'
   uci del uhttpd.main.listen_https
+  uci add_list uhttpd.main.listen_http='0.0.0.0:8080'
+  uci add_list uhttpd.main.listen_https='0.0.0.0:4443'
+  uci set uhttpd.main.redirect_https='1'
   uci commit uhttpd
 
   #add network rules for cosmos-Networks
-  echo "setup network rules for constellation"
+  log "setup network rules for constellation"
   uci set network.constellation=interface
   uci set network.constellation.proto='none'
   uci set network.constellation.device='nebula1'
   uci set network.constellation.multipath='off'
-  echo "setup firewall rules for cosmos"
+  log "setup firewall rules for cosmos"
   uci add firewall zone
   uci set firewall.@zone[-1].name='cosmos'
   uci set firewall.@zone[-1].input='ACCEPT'
@@ -274,7 +282,6 @@ if [ -n "$cosmos" ]; then
   uci set mwan3.default_rule_v6.use_policy='default'
 
   if [ -e /dev/cdc-wdm0 ]; then
-    echo "$(date +"%F_%H%M%S") found LTE-module, setup wwan interface..." >> /etc/cosmos/init-script.log
     uci set network.wwan=interface
     uci set network.wwan.proto='qmi'
     uci set network.wwan.device='/dev/cdc-wdm0'
@@ -311,8 +318,6 @@ if [ -n "$cosmos" ]; then
     uci set mwan3.wwan.enabled='1'
     if [ "${SIM_APN}" ]; then uci set network.WWAN.apn="${SIM_APN}" ; else uci set network.WWAN.apn='internet'; fi
     if [ "${SIM_PIN}" ]; then uci set network.LTE.pincode="${SIM_PIN}" ; fi
-  else
-    echo "$(date +"%F_%H%M%S") no LTE-module found, continue..." >> /etc/cosmos/init-script.log
   fi
 
   uci commit network && service network reload
@@ -321,5 +326,5 @@ if [ -n "$cosmos" ]; then
 
 fi
 
-echo "All done!"
+log "All done!"
 exit 0

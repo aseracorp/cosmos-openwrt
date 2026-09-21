@@ -4,15 +4,12 @@ on:
   workflow_dispatch:
   push:
     branches: [ "master", "unstable" ]
-  pull_request:
-    branches: [ "master", "unstable" ]
 
 env:
   SSH_KEY: ${{ secrets.SSH_KEY }}
-  owrt_version: '25.12.5'
-  snapraid_version: '14.9'
+  owrt_version: ''
   cosmos_version: 'latest'
-  packages: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep coreutils-timeout ethtool findutils-xargs coreutils-df'
+  packages: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci luci-ssl fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils kmod-lib-lz4 zram-swap curl grep coreutils-timeout ethtool findutils-xargs coreutils-df snapraid mergerfs luci-theme-footstrap'
   files: 'files'
   rootfs_partsize: '896'
   storage: true
@@ -41,7 +38,7 @@ jobs:
       - name: install deps
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq musl-tools 
+          packages: awk file build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq musl-tools 
           version: 1.0
           
       - name: add env-vars & secrets
@@ -51,6 +48,16 @@ jobs:
           echo 'SSH_KEY="${{ secrets.SSH_KEY }}"' >> ${{ env.files }}/etc/cosmos/.env
           ### copy folder to arm64
           cp -R ${{ env.files }} ${{ env.files }}-arm64
+
+      - name: resolve OpenWrt version
+        run: |
+          OWRT_VERSION="${{ env.owrt_version }}"
+          if [ -z "${OWRT_VERSION}" ]; then
+            echo "No OpenWrt version specified, fetching latest release..."
+            OWRT_VERSION=$(curl -s https://downloads.openwrt.org/releases/ | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/"' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1)
+          fi
+          echo "owrt_version=${OWRT_VERSION}" >> "$GITHUB_ENV"
+          echo "Using OpenWrt version: ${OWRT_VERSION}"
 
       - parallel:
         - name: Download for bcm27xx-bcm2711
@@ -139,54 +146,48 @@ jobs:
             unzip -o "${ZIP_FILEarm64}"
             mv cosmos-cloud-${RELEASE#v}-arm64/* ${{ env.files }}-arm64/opt/cosmos/
 
-      - name: cache Snapraid
-        id: cache-snapraid
-        uses: actions/cache@v6
-        with:
-          path: |
-            ${{ env.files }}/bin/snapraid
-            ${{ env.files }}-arm64/bin/snapraid
-          key: automatic-snapraid-${{ env.snapraid_version }}
-
-      - parallel:
-        - name: build snapraid amd64
-          if: steps.cache-snapraid.outputs.cache-hit != 'true'
-          run: |
-            echo "INSTALLING SNAPRAID AMD64..."
-            mkdir -p snapraid-amd64 && cd snapraid-amd64
-            curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
-            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz
-            cd snapraid-${{ env.snapraid_version }}/
-            CC="musl-gcc" ./configure LDFLAGS="-s -w -pthread"
-            make
-            make check
-            upx -9 snapraid
-            rm -f ../../${{ env.files }}/bin/snapraid
-            mkdir -p ../../${{ env.files }}/bin/
-            mv snapraid ../../${{ env.files }}/bin/
-
-        - name: build snapraid arm64
-          if: steps.cache-snapraid.outputs.cache-hit != 'true'
-          run: |
-            echo "INSTALLING SNAPRAID ARM64..."
-            mkdir -p snapraid-arm64 && cd snapraid-arm64
-            curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
-            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz
-            cd snapraid-${{ env.snapraid_version }}/
-            CC="musl-gcc" ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-s -w -pthread"
-            make
-            make check
-            upx -9 snapraid
-            rm -f ../../${{ env.files }}-arm64/bin/snapraid
-            mkdir -p ../../${{ env.files }}-arm64/bin/
-            mv snapraid ../../${{ env.files }}-arm64/bin/
-
       - name: add custom files
         run: |
           chmod -R 755 ${{ env.files }}
           chmod -R 755 ${{ env.files }}-arm64
           cp -R ${{ env.files }} openwrt/imagebuilder-x86-64/${{ env.files }}
           cp -R ${{ env.files }}-arm64 openwrt/imagebuilder-bcm27xx-bcm2711/${{ env.files }}
+
+      - name: configure Cosmos Cloud, SnapRAID & mergerfs apk feed in imagebuilders
+        run: |
+          set -euo pipefail
+          FEED_BASE="https://aseracorp.github.io/openwrt-packages"
+          KEY_ID="aede713bafd53a86"
+          # Register the unified Cosmos Cloud feed (snapraid + mergerfs + cosmoscloud) +
+          # trust key in each imagebuilder so the `snapraid` / `mergerfs` packages
+          # resolve via PACKAGES during `make image`.
+          # (Flat apk repo: just append the packages.adb URL to the imagebuilder's
+          # 'repositories' file and drop the pub key into its keys/ dir.)
+          config_feed() {
+            local ib="$1" arch="$2"
+            local dir="openwrt/$ib"
+            if [ ! -f "$dir/repositories" ]; then
+              echo "::warning::cosmos feed skipped for $ib (needs apk imagebuilder 25.1+)"
+              return
+            fi
+            mkdir -p "$dir/keys"
+            curl -fsSL "$FEED_BASE/$arch/$KEY_ID.pub" -o "$dir/keys/$KEY_ID.pub"
+            if ! grep -q "$FEED_BASE/$arch/packages.adb" "$dir/repositories"; then
+              echo "$FEED_BASE/$arch/packages.adb" >> "$dir/repositories"
+            fi
+            # Bake the repo + trust key into the runtime apk config so on-device
+            # `apk update` / `apk upgrade snapraid mergerfs` can reach this feed. The
+            # files overlay (make image FILES=...) is copied verbatim into the
+            # rootfs, so writing under its etc/apk lands on the final image.
+            local rt="openwrt/$ib/${{ env.files }}"
+            mkdir -p "$rt/etc/apk/repositories.d" "$rt/etc/apk/keys"
+            cp "$dir/keys/$KEY_ID.pub" "$rt/etc/apk/keys/$KEY_ID.pub"
+            if ! grep -q "$FEED_BASE/$arch/packages.adb" "$rt/etc/apk/repositories.d/customfeeds.list" 2>/dev/null; then
+              echo "$FEED_BASE/$arch/packages.adb" >> "$rt/etc/apk/repositories.d/customfeeds.list"
+            fi
+          }
+          config_feed imagebuilder-x86-64 x86_64
+          config_feed imagebuilder-bcm27xx-bcm2711 aarch64_cortex-a72
 
       - parallel:
         - name: build image RPI-4
@@ -200,9 +201,11 @@ jobs:
             make image PROFILE=generic PACKAGES="${{ env.packages }}" FILES="${{ env.files }}" ROOTFS_PARTSIZE="${{ env.rootfs_partsize }}" EXTRA_IMAGE_NAME="CosmosCloud-${{ env.cosmos_version }}" DISABLED_SERVICES="ttyd knxWatchdog"
 
       - name: Create GitHub Release
-        uses: ncipollo/release-action@v1      
+        uses: ncipollo/release-action@v1
         with:
-          artifacts: "openwrt/imagebuilder-bcm27xx-bcm2711/bin/targets/bcm27xx/bcm2711/*squashfs*.img.gz, openwrt/imagebuilder-x86-64/bin/targets/x86/64/*squashfs*.img.gz"
+          artifacts: "openwrt/imagebuilder-bcm27xx-bcm2711/bin/targets/bcm27xx/bcm2711/*squashfs*.img.gz, openwrt/imagebuilder-x86-64/bin/targets/x86/64/*squashfs-combined*.img.gz"
           tag: cc${{ env.cosmos_version }}-owv${{ env.owrt_version }}
           name: Cosmos Cloud ${{ env.cosmos_version }} OpenWrt ${{ env.owrt_version }}
           allowUpdates: true
+          prerelease: ${{ env.owrt_version == 'snapshots' || contains(env.cosmos_version, 'unstable') }}
+          makeLatest: ${{ env.owrt_version != 'snapshots' && !contains(env.cosmos_version, 'unstable') }}

@@ -1,9 +1,19 @@
 #!/bin/bash
-# CosmosCloud on OpenWrt fix missing shutdown-command (OpenWrt only knows reboot/poweroff)
+# provided: CosmosCloud on OpenWrt fix missing shutdown-command (OpenWrt only knows reboot/poweroff)
 # Copyright aseracorp 2025
+# Usage: shutdown [-r|-h] [time] [message]  (accepts common busybox shutdown-style args)
 
-if [ $1 == "-r" ]; then
-        reboot
-elif [ $1 == "-h" ]; then
-        poweroff
-fi
+case "${1:-}" in
+        -r|--reboot|-r*now|now)
+                shift
+                reboot
+                ;;
+        -h|--halt|--poweroff|-h*|-p)
+                shift
+                poweroff
+                ;;
+        *)
+                echo "Usage: shutdown [-r|--reboot] [-h|--poweroff] [now]" >&2
+                exit 2
+                ;;
+esac
