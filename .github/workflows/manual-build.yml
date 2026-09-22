@@ -9,10 +9,10 @@ on:
         type: string
         default: 'latest'
       owrt_version:
-        description: 'OpenWrt version (e.g., 24.10.3)'
+        description: 'OpenWrt version (e.g., 24.10.3; empty for latest release)'
         required: false
         type: string
-        default: '25.12.5'
+        default: ''
       target:
         description: 'Target architecture (e.g., bcm27xx-bcm2711)'
         required: true
@@ -27,7 +27,7 @@ on:
         description: 'Additional packages to include (space-separated)'
         required: false
         type: string
-        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils zram-swap grep coreutils-timeout ethtool findutils-xargs coreutils-df'
+        default: 'luci-i18n-base-de luci-i18n-base-fr luci-i18n-base-it zoneinfo-core zoneinfo-europe luci luci-ssl fdisk mount-utils kmod-fs-btrfs btrfs-progs block-mount chattr docker dockerd luci-app-dockerman luci-app-uhttpd kmod-usb-acm avahi-daemon bash yq lsblk avahi-utils watchcat luci-app-watchcat fuse3-utils rclone samba4-server wsdd2 usbutils kmod-usb-net-qmi-wwan uqmi luci-proto-qmi kmod-usb-serial-option mwan3 luci-app-mwan3 ntfs-3g shadow-su sudo kmod-usb-serial-ftdi partx-utils kmod-lib-lz4 zram-swap curl grep coreutils-timeout ethtool findutils-xargs coreutils-df snapraid mergerfs luci-theme-footstrap'
       files:
         description: 'Folder with additional files (f.e. files/etc/uci-defaults)'
         required: false
@@ -46,18 +46,41 @@ on:
 
 env:
   SSH_KEY: ${{ secrets.SSH_KEY }}
-  owrt_version: 'snapshots'
-  snapraid_version: '14.9'
+  owrt_version: ''
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+
+      - name: free up space on gh runner (otherwise it'll run out of space)
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: false #~1G
+          remove_dotnet: false #~5G
+          remove_haskell: true #~4G
+          remove_tool_cache: false #~5G
+          remove_swap: true #~3G
+          rm_cmd: "rmz"
+          #remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*" #~7G
+          remove_folders: "/usr/share/swift" #~3.3G
+          #remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/aws-cli /usr/local/aws-sam-cli #~7G
+
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - if: ${{ github.event.inputs.owrt_version != '' }}
-        run: echo "owrt_version=${{ github.event.inputs.owrt_version }}" >> "$GITHUB_ENV"
+      - name: resolve OpenWrt version
+        run: |
+          OWRT_VERSION="${{ github.event.inputs.owrt_version }}"
+          if [ -z "${OWRT_VERSION}" ]; then
+            OWRT_VERSION="${{ env.owrt_version }}"
+          fi
+          if [ -z "${OWRT_VERSION}" ]; then
+            echo "No OpenWrt version specified, fetching latest release..."
+            OWRT_VERSION=$(curl -s https://downloads.openwrt.org/releases/ | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/"' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1)
+          fi
+          echo "owrt_version=${OWRT_VERSION}" >> "$GITHUB_ENV"
+          echo "Using OpenWrt version: ${OWRT_VERSION}"
 
       - id: targetpath
         uses: frabert/replace-string-action@v2
@@ -69,7 +92,7 @@ jobs:
       - name: install deps
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu jq musl-tools
+          packages: build-essential file libncurses-dev zlib1g-dev gawk git gettext libssl-dev xsltproc rsync wget unzip python3 python3-setuptools zstd curl tar gcc make gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf binutils-aarch64-linux-gnu jq musl-tools
           version: 1.0
 
       - name: Download OpenWrt Imagebuilder
@@ -88,14 +111,93 @@ jobs:
           rm -Rf openwrt-imagebuilder/
           mv openwrt-imagebuilder-* openwrt-imagebuilder
 
+      - name: detect Cosmos arch & repo
+        id: detect-arch
+        run: |
+          # Determine the CPU architecture of the selected OpenWrt target from
+          # the official profiles.json, then map it to the Cosmos release that
+          # supports it.
+          if [ "${{ env.owrt_version }}" = "snapshots" ]; then
+            BASE_URL="https://downloads.openwrt.org/snapshots/targets/${{ steps.targetpath.outputs.replaced }}"
+          else
+            BASE_URL="https://downloads.openwrt.org/releases/${{ env.owrt_version }}/targets/${{ steps.targetpath.outputs.replaced }}"
+          fi
+          curl -sL "${BASE_URL}/profiles.json" -o profiles.json
+          ARCH_PACKAGES=$(jq -r '.arch_packages' profiles.json)
+          echo "OpenWrt arch_packages: ${ARCH_PACKAGES}"
+          case "${ARCH_PACKAGES}" in
+            x86_64)
+              COSMOS_REPO="aseracorp/Cosmos-Server"
+              COSMOS_ARCH="amd64"
+              ;;
+            aarch64*)
+              COSMOS_REPO="aseracorp/Cosmos-Server"
+              COSMOS_ARCH="arm64"
+              ;;
+            arm_*)
+              case "${ARCH_PACKAGES}" in
+                arm_arm1176jzf*|arm_arm926ej*|arm_arm1136jf*|arm_armv6*)
+                  # ARMv6 (e.g. RPi1). Cosmos zip exists. Snapraid is added
+                  # later from its apk feed, which covers all OpenWrt archs.
+                  COSMOS_REPO="aseracorp/Cosmos-Server-legacyArchs"
+                  COSMOS_ARCH="armv6"
+                  ;;
+                arm_xscale*|arm_arm920t*|arm_armv5*)
+                  echo "::error::OpenWrt target ${{ github.event.inputs.target }} is ${ARCH_PACKAGES} (ARMv5-era), no Cosmos build available"
+                  exit 1
+                  ;;
+                *)
+                  COSMOS_REPO="aseracorp/Cosmos-Server-legacyArchs"
+                  COSMOS_ARCH="armv7"
+                  ;;
+              esac
+              ;;
+            i386|i486|i586|i686|x86*)
+              # 32-bit x86. Cosmos pack exists; snapraid comes from its apk feed.
+              COSMOS_REPO="aseracorp/Cosmos-Server-legacyArchs"
+              COSMOS_ARCH="386"
+              ;;
+            riscv64)
+              COSMOS_REPO="aseracorp/Cosmos-Server-legacyArchs"
+              COSMOS_ARCH="riscv64"
+              ;;
+            mips*|mipsel*)
+              echo "::error::OpenWrt target ${{ github.event.inputs.target }} is ${ARCH_PACKAGES} (MIPS), no Cosmos build available"
+              exit 1
+              ;;
+            powerpc*|ppc*)
+              echo "::error::OpenWrt target ${{ github.event.inputs.target }} is ${ARCH_PACKAGES} (PowerPC/ppc32), Cosmos only ships ppc64le which OpenWrt targets do not use"
+              exit 1
+              ;;
+            loongarch*)
+              echo "::error::OpenWrt target ${{ github.event.inputs.target }} is ${ARCH_PACKAGES} (LoongArch), no Cosmos build available"
+              exit 1
+              ;;
+            *)
+              echo "::error::Unrecognized OpenWrt arch_packages '${ARCH_PACKAGES}' for target ${{ github.event.inputs.target }}"
+              exit 1
+              ;;
+          esac
+          echo "arch_packages=${ARCH_PACKAGES}" >> "$GITHUB_ENV"
+          echo "cosmos_repo=${COSMOS_REPO}" >> "$GITHUB_ENV"
+          echo "cosmos_arch=${COSMOS_ARCH}" >> "$GITHUB_ENV"
+          echo "Selected Cosmos repo: ${COSMOS_REPO} (arch: ${COSMOS_ARCH})"
+
       - name: get Cosmos Version
         run: |
           if [ "${{ github.event.inputs.cosmos_version }}" = "latest" ] ; then
-            cosmos_version=$(curl -s https://api.github.com/repos/azukaar/Cosmos-Server/releases/latest | grep "tag_name" | cut -d '"' -f 4)
+            cosmos_version=$(curl -s https://api.github.com/repos/${{ env.cosmos_repo }}/releases/latest | grep "tag_name" | cut -d '"' -f 4)
+            if [ -z "${cosmos_version}" ] || [ "${cosmos_version}" = "null" ]; then
+              cosmos_version=$(jq -r 'first | .tag_name' <<< $(curl -s https://api.github.com/repos/${{ env.cosmos_repo }}/releases))
+            fi
           elif [ "${{ github.event.inputs.cosmos_version }}" = "unstable" ] ; then
-            cosmos_version=$(jq -r 'map(select(.prerelease)) | first | .tag_name' <<< $(curl -s https://api.github.com/repos/azukaar/Cosmos-Server/releases))
+            cosmos_version=$(jq -r 'map(select(.prerelease)) | first | .tag_name' <<< $(curl -s https://api.github.com/repos/${{ env.cosmos_repo }}/releases))
           else
             cosmos_version="${{ github.event.inputs.cosmos_version }}"
+          fi
+          if [ -z "${cosmos_version}" ] || [ "${cosmos_version}" = "null" ]; then
+            echo "::error::Could not resolve Cosmos version '${{ github.event.inputs.cosmos_version }}' from ${{ env.cosmos_repo }}"
+            exit 1
           fi
           echo "cosmos_version=${cosmos_version}" >> "$GITHUB_ENV"
 
@@ -112,24 +214,21 @@ jobs:
           echo "INSTALLING COSMOS CLOUD..."
           rm -Rf ${{ github.event.inputs.files }}/opt/cosmos/
           mkdir -p ${{ github.event.inputs.files }}/opt/cosmos
-          echo "Downloading Cosmos release $RELEASE..."
+          echo "Downloading Cosmos release ${{ env.cosmos_version }} (repo: ${{ env.cosmos_repo }}, arch: ${{ env.cosmos_arch }})..."
           RELEASE=${{ env.cosmos_version }}
-          if [ "${{ github.event.inputs.target }}" == "x86-64" ]; then
-            ZIP_FILE="cosmos-cloud-${RELEASE#v}-amd64.zip"
-          else
-            ZIP_FILE="cosmos-cloud-${RELEASE#v}-arm64.zip"
-          fi
-          curl -L "https://github.com/aseracorp/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}" -o "${ZIP_FILE}"
-          curl -L "https://github.com/aseracorp/Cosmos-Server/releases/download/${RELEASE}/${ZIP_FILE}.md5" -o "${ZIP_FILE}.md5"
+          ZIP_FILE="cosmos-cloud-${RELEASE#v}-${{ env.cosmos_arch }}.zip"
+          curl -L "https://github.com/${{ env.cosmos_repo }}/releases/download/${RELEASE}/${ZIP_FILE}" -o "${ZIP_FILE}"
+          curl -L "https://github.com/${{ env.cosmos_repo }}/releases/download/${RELEASE}/${ZIP_FILE}.md5" -o "${ZIP_FILE}.md5"
           echo "Verifying MD5 checksum..."
           md5sum -c "${ZIP_FILE}.md5"
           echo "Extracting files..."
           unzip -o "${ZIP_FILE}"
-          if [ "${{ github.event.inputs.target }}" == "x86-64" ]; then
-            mv cosmos-cloud-${RELEASE#v}/* ${{ github.event.inputs.files }}/opt/cosmos/
-          else
-            mv cosmos-cloud-${RELEASE#v}-arm64/* ${{ github.event.inputs.files }}/opt/cosmos/
-          fi
+          # The zip contains a single top-level folder whose name differs
+          # between repos (e.g. cosmos-cloud-<ver> for amd64 vs
+          # cosmos-cloud-<ver>-arm64/-armv7/... for others). Detect it.
+          EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "cosmos-cloud-*" | head -n1)
+          echo "Extracted folder: ${EXTRACTED_DIR}"
+          mv ${EXTRACTED_DIR}/* ${{ github.event.inputs.files }}/opt/cosmos/
 
       - name: add env-vars
         run: |
@@ -137,35 +236,38 @@ jobs:
           echo "STORAGE=${{ github.event.inputs.storage }}" >> ${{ github.event.inputs.files }}/etc/cosmos/.env
           echo 'SSH_KEY="${{ secrets.SSH_KEY }}"' >> ${{ github.event.inputs.files }}/etc/cosmos/.env
 
-      - name: cache Snapraid
-        id: cache-snapraid
-        uses: actions/cache@v6
-        with:
-          path: ${{ github.event.inputs.files }}/sbin/snapraid
-          key: ${{ runner.os }}-${{ github.event.inputs.target }}-snapraid-${{ env.snapraid_version }}
-
-      - name: install Snapraid
-        if: steps.cache-snapraid.outputs.cache-hit != 'true'
+      - name: configure Cosmos Cloud, SnapRAID & mergerfs apk feed
         run: |
-          echo "INSTALLING SNAPRAID..."
-          curl -L "https://github.com/amadvance/snapraid/releases/download/v${{ env.snapraid_version }}/snapraid-${{ env.snapraid_version }}.tar.gz" -o "snapraid-${{ env.snapraid_version }}.tar.gz"
-          if [ "${{ github.event.inputs.target }}" == "x86-64" ]; then
-            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz
-            cd snapraid-${{ env.snapraid_version }}/
-            CC="musl-gcc" ./configure LDFLAGS="-s -w -pthread"
-            make
-            make check
+          set -euo pipefail
+          FEED_BASE="https://aseracorp.github.io/openwrt-packages"
+          KEY_ID="aede713bafd53a86"
+          IB="openwrt/openwrt-imagebuilder"
+          if [ ! -f "$IB/repositories" ]; then
+            echo "::warning::cosmos apk feed requires OpenWrt 25.1+ (apk); snapraid/mergerfs skipped"
           else
-            tar -xf snapraid-${{ env.snapraid_version }}.tar.gz
-            cd snapraid-${{ env.snapraid_version }}/
-            CC="musl-gcc" ./configure --build x86_64-pc-linux-gnu --host aarch64-linux-gnu LDFLAGS="-s -w -pthread"
-            make
-            make check
+            ARCH="${{ env.arch_packages }}"
+            if [ -z "$ARCH" ]; then
+              echo "::warning::no arch determined; snapraid package skipped"
+            elif curl -fsS -o /dev/null "$FEED_BASE/$ARCH/packages.adb"; then
+              mkdir -p "$IB/keys"
+              curl -fsSL "$FEED_BASE/$ARCH/$KEY_ID.pub" -o "$IB/keys/$KEY_ID.pub"
+              if ! grep -q "$FEED_BASE/$ARCH/packages.adb" "$IB/repositories"; then
+                echo "$FEED_BASE/$ARCH/packages.adb" >> "$IB/repositories"
+              fi
+              # Bake the repo + trust key into the runtime apk config so
+              # on-device `apk update` / `apk upgrade snapraid` can reach this
+              # feed. ${{ github.event.inputs.files }} is the overlay copied
+              # into the image and baked verbatim into the rootfs.
+              RT="${{ github.event.inputs.files }}"
+              mkdir -p "$RT/etc/apk/repositories.d" "$RT/etc/apk/keys"
+              cp "$IB/keys/$KEY_ID.pub" "$RT/etc/apk/keys/$KEY_ID.pub"
+              if ! grep -q "$FEED_BASE/$ARCH/packages.adb" "$RT/etc/apk/repositories.d/customfeeds.list" 2>/dev/null; then
+                echo "$FEED_BASE/$ARCH/packages.adb" >> "$RT/etc/apk/repositories.d/customfeeds.list"
+              fi
+            else
+              echo "::warning::no cosmos feed for arch '$ARCH'; snapraid/mergerfs skipped"
+            fi
           fi
-          upx -9 snapraid
-          rm -f ../${{ github.event.inputs.files }}/sbin/snapraid
-          mkdir ../${{ github.event.inputs.files }}/sbin/
-          mv snapraid ../${{ github.event.inputs.files }}/sbin/
 
       - name: add custom files
         run: |
@@ -175,68 +277,17 @@ jobs:
       - name: build image
         working-directory: openwrt/openwrt-imagebuilder
         run: |
-          make image PROFILE=${{ github.event.inputs.profile }} PACKAGES="${{ github.event.inputs.packages }}" FILES="${{ github.event.inputs.files }}" ROOTFS_PARTSIZE="${{ github.event.inputs.rootfs_partsize }}"
+          make image PROFILE=${{ github.event.inputs.profile }} PACKAGES="${{ github.event.inputs.packages }}" FILES="${{ github.event.inputs.files }}" ROOTFS_PARTSIZE="${{ github.event.inputs.rootfs_partsize }}" EXTRA_IMAGE_NAME="CosmosCloud-${{ env.cosmos_version }}" DISABLED_SERVICES="ttyd"
 
-      - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target != 'x86-64' }}
-        name: Upload factory image
-        uses: actions/upload-artifact@v7
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
         with:
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory.img.gz
-          retention-days: 7
-          archive: false
-
-      - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target != 'x86-64' }}
-        name: Upload sysupgrade image
-        uses: actions/upload-artifact@v7
-        with:
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
-          retention-days: 7
-          archive: false
-
-      - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target != 'x86-64' }}
-        name: Upload factory image
-        uses: actions/upload-artifact@v7
-        with:
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-factory.img.gz
-          retention-days: 7
-          archive: false
-
-      - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target != 'x86-64' }}
-        name: Upload sysupgrade image
-        uses: actions/upload-artifact@v7
-        with:
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-sysupgrade.img.gz
-          retention-days: 7
-          archive: false
-
-      - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target == 'x86-64' }}
-        name: Upload efi image
-        uses: actions/upload-artifact@v7
-        with:
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi.img.gz
-          retention-days: 7
-          archive: false
-
-      - if: ${{ env.owrt_version != 'snapshots' && github.event.inputs.target == 'x86-64' }}
-        name: Upload bios image
-        uses: actions/upload-artifact@v7
-        with:
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ env.owrt_version }}-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined.img.gz
-          retention-days: 7
-          archive: false
-
-      - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target == 'x86-64' }}
-        name: Upload efi image
-        uses: actions/upload-artifact@v7
-        with:
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined-efi.img.gz
-          retention-days: 7
-          archive: false
-
-      - if: ${{ env.owrt_version == 'snapshots' && github.event.inputs.target == 'x86-64' }}
-        name: Upload bios image
-        uses: actions/upload-artifact@v7
-        with:
-          path: openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/openwrt-${{ github.event.inputs.target }}-${{ github.event.inputs.profile }}-squashfs-combined.img.gz
-          retention-days: 7
-          archive: false
+          artifacts: |
+            openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/*squashfs-factory.img.gz,
+            openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/*squashfs-sysupgrade.img.gz,
+            openwrt/openwrt-imagebuilder/bin/targets/${{ steps.targetpath.outputs.replaced }}/*squashfs-combined*.img.gz
+          tag: cc${{ env.cosmos_version }}-owv${{ env.owrt_version }}
+          name: Cosmos Cloud ${{ env.cosmos_version }} OpenWrt ${{ env.owrt_version }}
+          allowUpdates: true
+          prerelease: ${{ env.owrt_version == 'snapshots' || contains(env.cosmos_version, 'unstable') }}
+          makeLatest: ${{ env.owrt_version != 'snapshots' && !contains(env.cosmos_version, 'unstable') }}

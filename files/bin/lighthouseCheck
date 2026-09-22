@@ -1,0 +1,60 @@
+#!/bin/bash
+# description: workaround for lighthouse with changing IP
+# processname: /bin/lighthouseCheck
+# Copyright aseracorp 2026
+
+loglevel="INFO"                                 #INFO is default, DEBUG for more infos
+frequency=120                                   #how often should we check for IP-Change in seconds
+logfile="/etc/cosmos/lighthouseCheck.json"      # where to store the old IPs
+
+log()  { [ "${loglevel}" == "INFO" ] && logger -t lighthouseCheck "${1}"; }
+logd() { [ "${loglevel}" == "DEBUG" ] && logger -t lighthouseCheck "${1}"; }
+
+recordIP() {
+        IP="${1}" date="$(date +"%F_%H%M%S")" yq -i '. + {"IP": strenv(IP), "Timestamp": strenv(date)}' "${logfile}"
+}
+
+while :; do
+
+        logd "read old IP from ${logfile}"
+        oldIP=""
+        if [ -f "${logfile}" ] && [ -n "$(yq '.[]' "${logfile}" 2>/dev/null)" ]; then
+                oldIP="$(yq -o p '.[-1].IP' "${logfile}" 2>/dev/null)"
+        fi
+
+        if [ -f "/etc/cosmos/nebula.yml" ] && [ "$(yq '.lighthouse.am_lighthouse' "/etc/cosmos/nebula.yml" 2>/dev/null)" == false ]; then
+
+                logd "get IP of lighthouse"
+                lighthouse="$(grep -m1 -oP '(^  - )((?>(?!\d+\.)[a-zA-Z0-9_\-]{1,63}\.?)+(?:[a-zA-Z]{2}))(?=:4242$)' "/etc/cosmos/nebula.yml" | cut -c5-)"
+                IP="$(nslookup -type=a ${lighthouse} 2>/dev/null | awk '/^Address: / { print $2 }')"
+
+                # first run: initialise the logfile with the current IP, and never treat
+                # the (empty) stored value as a "change"
+                if [ ! -f "${logfile}" ]; then
+                        logd "create logfile and store initial IP"
+                        echo '[]' > "${logfile}"
+                        recordIP "${IP}"
+                fi
+
+                logd "check lighthouse for IP-Change"
+                if [ -n "${oldIP}" ] && [ "${oldIP}" != "${IP}" ]; then
+                        log "found new IP, restart Cosmos"
+                        logd "store new IP in ${logfile}"
+                        recordIP "${IP}"
+                        logd "restart Cosmos Server"
+                        [ "$(service CosmosCloud status 2>/dev/null)" == "running" ] && service CosmosCloud restart
+                elif ! ping -i 2 -c 5 -w 10 -q -A "$(yq '.lighthouse.hosts[0]' "/etc/cosmos/nebula.yml")" >/dev/null 2>&1; then
+                        logd "cannot ping lighthouse, restart Cosmos Server"
+                        [ "$(service CosmosCloud status 2>/dev/null)" == "running" ] && service CosmosCloud restart
+                else
+                        logd "no IP-Change, do nothing"
+                fi
+        elif [ ! -f "/etc/cosmos/nebula.yml" ]; then
+                logd "no nebula.yml found, do nothing"
+        elif [ "$(yq '.lighthouse.am_lighthouse' "/etc/cosmos/nebula.yml" 2>/dev/null)" == true ]; then
+                logd "is a lighthouse, do nothing"
+        fi
+        logd "wait for ${frequency}s"
+        sleep "${frequency}"
+
+done

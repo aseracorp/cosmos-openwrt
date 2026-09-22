@@ -1,0 +1,30 @@
+#!/bin/bash
+# description: Stop CosmosCloud + open LuCI if the initial cosmos setup is not
+# completed within 2h of boot (assume the device was never configured by the user)
+# processname: /bin/CosmosSetupWatchdog
+# Copyright aseracorp 2026
+
+log() { logger -t CosmosSetupWatchdog "$@"; }
+
+log "CosmosSetupWatchdog started"
+
+while :; do
+        # as soon as the user finished the initial cosmos setup, we are done
+        if [ "$(yq '.NewInstall' /etc/cosmos/cosmos.config.json -o x 2>/dev/null)" == "false" ]; then
+                log "initial setup complete, exit"
+                exit 0
+        fi
+
+        uptime_s=$(awk '{print int($1)}' /proc/uptime 2>/dev/null)
+        if [ "${uptime_s:-0}" -ge 7200 ]; then
+                log "no initial setup after 2h; open LuCI and stop CosmosCloud"
+                PASSWD=""
+                [ -f /etc/cosmos/.env ] && source /etc/cosmos/.env
+                # set the luci/root password so the owner can log in
+                [ -n "${PASSWD}" ] && (echo "${PASSWD}"; sleep 1; echo "${PASSWD}") | passwd >/dev/null 2>&1
+                # stop the cosmos service so it stops retrying / hides the UI
+                /etc/init.d/CosmosCloud stop >/dev/null 2>&1
+                exit 0
+        fi
+        sleep 45
+done

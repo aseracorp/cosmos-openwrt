@@ -1,59 +1,68 @@
 #!/bin/bash
-# description: Fallback to static IP if dhcp-client does not get an IP after 30s
+# description: Fallback to static IP if dhcp-client does not get an IP after delay
 # processname: /bin/staticFallback
 # Copyright aseracorp 2026
 
 loglevel="INFO" #INFO is default, DEBUG for more infos
 dhcp="lan"              #Interface with dhcp-client IP configuration
 static="lan11"          #Interface with static IP configuration
-delay=30                #how may seconds to wait for a dhcp-address before configuring the static IP
-bridge=                 #bridge-device that is used as lan-bridge, usually br-lan, leave empty to auto detect
-nic=                    #Device to listen to hotplug events (should be the physical nic, like eth0) leave empty to auto detect first port in ports list
+delay=30                #how many seconds to wait for a dhcp-address before configuring the static IP
+bridge=                 #bridge-device used as lan-bridge, usually br-lan; empty = auto detect
+nic=                    #device to listen for hotplug events (should be the physical nic); empty = auto detect first port
 
-log() {
-        [ "${loglevel}" == "INFO" ] && logger -t lighthouseCheck "${1}"
-}
+log()  { [ "${loglevel}" == "INFO" ] && logger -t staticFallback "${1}"; }
+logd() { [ "${loglevel}" == "DEBUG" ] && logger -t staticFallback "${1}"; }
 
-logd() {
-        [ "${loglevel}" == "DEBUG" ] && logger -t lighthouseCheck "${1}"
-}
-
+# auto-detect bridge (lan device) and physical nic (first port in its ports list)
 [ -z "${bridge}" ] && bridge="$(uci get network.lan.device)"
-[ -z "${nic}" ] && nic="$(uci get "$(uci show network | grep -oP "network\.@device\[[0-9]\]\.(?=name='${bridge}')")ports")"
+if [ -z "${nic}" ]; then
+        nic="$(uci get "$(uci show network | grep -oP "network\.@device\[[0-9]\]\.(?=name='${bridge}')")ports" 2>/dev/null)"
+fi
 
-while :; do
+getIP() { ip -4 addr show "${bridge}" 2>/dev/null | grep -oP "(?<=inet ).*(?=/)" | head -n1; }
 
-#wait until network device is up
-(logread -f & ) | grep -q "Network device '${nic}' link is up"
-
-#only do something if config is as expected (dhcp-nic is dhcp-client and static-nic is static)
-if [ "$(uci get network.lan.proto)" == "dhcp" -a "$(uci get network.lan11.proto)" == "static" ]; then
-
-        #make sure of nic state ( set dhcp-client up and static down )
-        logd "bring nics into default state (${dhcp} up and ${static} down)"
-        ifup "${dhcp}" && ifdown "${static}"
-
-        #check the local IP of the nic the script listens to
-        logd "check the local IP of the nic the script listens to"
-        localIP="" && count=0
-        while [[ -z "${localIP}" && ${count} -le ${delay} ]]; do
-                localIP=$(ip -4 addr show "${bridge}" | grep -oP "(?<=inet ).*(?=/)")
+waitForIP() {                      # returns 0 when an IP is present, 1 on ${delay}s timeout
+        local count=0
+        while [ -z "${localIP:-}" ] && [ "$count" -le "${delay}" ]; do
                 sleep 1
+                localIP="$(getIP)"
                 ((count++))
                 logd "#${count}: localIP is: ${localIP}"
         done
+        [ -n "${localIP:-}" ]
+}
 
-        #check if the Interface did not receive an IP
-        ( [ -n "${localIP}" ] && logd "found dhcp-client IP: ${localIP}" ) || ( logd "found no IP, start static nic" && ifdown "${dhcp}" && ifup "${static}" && service dnsmasq reload )
-        count=0
-        while [[ -z "${localIP}" && ${count} -le ${delay} ]]; do
-            localIP=$(ip -4 addr show "${bridge}" | grep -oP "(?<=inet ).*(?=/)")
-            sleep 1
-            ((count++))
-        done
-        log "staticFallback-routine completed, current LAN-IP is: ${localIP}"
-else
-        logd "${dhcp} and ${static} are not setup as expected, do nothing"
-fi
+# persistent logreader: reuse ONE `logread -f` pipeline instead of spawning a new
+# one (and leaking it) on every outer-loop iteration.
+(logread -f &) | while read -r line; do
+        [[ "${line}" == *"Network device '${nic}' link is up"* ]] || continue
 
+        # only act when config is as expected (dhcp-nic is dhcp-client, static-nic is static)
+        if [ "$(uci get network.lan.proto 2>/dev/null)" == "dhcp" ] &&
+           [ "$(uci get network.lan11.proto 2>/dev/null)" == "static" ]; then
+
+                logd "bring nics into default state (${dhcp} up and ${static} down)"
+                localIP=""
+                ifup "${dhcp}" 2>/dev/null
+                ifdown "${static}" 2>/dev/null
+
+                logd "check the local IP of the nic the script listens to"
+                waitForIP
+
+                if [ -n "${localIP}" ]; then
+                        logd "found dhcp-client IP: ${localIP}"
+                else
+                        logd "found no IP, start static nic"
+                        ifdown "${dhcp}" 2>/dev/null
+                        ifup "${static}" 2>/dev/null
+                        service dnsmasq reload 2>/dev/null
+                fi
+
+                # give the (now up) interface a moment, then confirm the final IP
+                localIP=""
+                waitForIP
+                log "staticFallback-routine completed, current LAN-IP is: ${localIP}"
+        else
+                logd "${dhcp} and ${static} are not setup as expected, do nothing"
+        fi
 done
